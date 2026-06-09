@@ -1,0 +1,312 @@
+#!/usr/bin/env python3
+"""
+Atomic step functions for Grasp_fruit executors.
+
+각 함수는 GraspExecutor 인스턴스를 받아 단일 동작을 수행한다.
+조합 예시:
+
+    result = step_approach(node, approach, confirm=True)    # → (joints, traj)
+    j1, approach_traj = result
+    result = step_descend(node, target, seed=j1, confirm=True)  # → (joints, traj)
+    j2, descend_traj = result
+    step_close_hand(node, enc, confirm=True)
+    step_lift(node, approach, seed=j2, descend_traj=descend_traj, confirm=True)
+    step_go_home(node, approach_traj=approach_traj)   # approach 역재생 → HOME
+"""
+
+from __future__ import annotations
+import time
+from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+from builtin_interfaces.msg import Duration as RosDuration
+
+
+# ---------------------------------------------------------------------------
+# 궤적 유틸리티
+# ---------------------------------------------------------------------------
+
+def reverse_trajectory(jt: JointTrajectory) -> JointTrajectory:
+    """JointTrajectory를 시간 역전하여 반환 (LIFT = reversed DESCEND).
+
+    approach→target 하강 궤적을 저장해두면, 동일 경로를 역재생하여
+    IK 재계산 없이 100% 성공률로 target→approach 상승이 가능하다.
+    """
+    rev = JointTrajectory()
+    rev.joint_names = list(jt.joint_names)
+
+    if not jt.points:
+        return rev
+
+    total = (jt.points[-1].time_from_start.sec +
+             jt.points[-1].time_from_start.nanosec * 1e-9)
+
+    for pt in reversed(jt.points):
+        t_orig = (pt.time_from_start.sec +
+                  pt.time_from_start.nanosec * 1e-9)
+        t_new  = total - t_orig
+        sec    = int(t_new)
+        nsec   = int(round((t_new - sec) * 1e9))
+
+        new_pt = JointTrajectoryPoint()
+        new_pt.positions       = list(pt.positions)
+        if list(pt.velocities):
+            new_pt.velocities  = [-v for v in pt.velocities]
+        new_pt.time_from_start = RosDuration(sec=sec, nanosec=nsec)
+        rev.points.append(new_pt)
+
+    return rev
+
+
+# ---------------------------------------------------------------------------
+# 내부 헬퍼
+# ---------------------------------------------------------------------------
+
+def _exec(node, jt: JointTrajectory, post_delay: float = 0.0) -> float:
+    """trajectory 전송 → joint 수렴 감지 후 반환.
+
+    타이머(_wait_for_traj) 대신 joint 수렴 polling(_wait_for_motion)을 주로 사용.
+    이유: bridge-C++ 간 mutex가 별개라 timing 오차 발생 시 명령이 덮어쓰여 소실될 수 있음.
+    실제 joint가 목표에 수렴함을 확인하므로 타이밍 오차와 무관하게 안전함.
+
+    흐름:
+      1. trajectory 발행
+      2. min_wait 슬립 (팔 출발 전 수렴 오판 방지)
+      3. joint polling으로 실제 도달 감지
+         → joint_states 미수신 시 timer fallback
+    """
+    dur = (jt.points[-1].time_from_start.sec +
+           jt.points[-1].time_from_start.nanosec * 1e-9)
+    node._exec_traj_smooth(jt)
+    target = list(jt.points[-1].positions)
+
+    # 팔이 출발하기 전에 polling 하면 현재 위치 ≈ 목표로 오판할 수 있으므로
+    # duration의 20% 또는 최소 0.5s 대기 후 polling 시작
+    min_wait = max(0.5, dur * 0.2)
+    time.sleep(min_wait)
+
+    if node._current_joints is not None:
+        # 실제 도달까지 polling → 타이머 짧으면 더 기다리고, 길면 일찍 반환
+        node._wait_for_motion(target, timeout=dur + 10.0, tol=0.05)
+    else:
+        # /franka/joint_position 미수신 → timer fallback
+        node._wait_for_traj(max(0.0, dur - min_wait))
+
+    if post_delay > 0:
+        time.sleep(post_delay)
+    return dur
+
+
+def _plan(node, goal, label: str, seed=None,
+          confirm: bool = True) -> JointTrajectory | None:
+    """_plan_step 래퍼. seed 가 있으면 jvals 로 전달."""
+    from robot_executor import HOME_JOINT_NAMES
+    jnames = HOME_JOINT_NAMES if seed is not None else None
+    return node._plan_step(goal, label,
+                           jnames=jnames, jvals=seed,
+                           confirm=confirm)
+
+
+# ---------------------------------------------------------------------------
+# Arm 이동 steps
+# ---------------------------------------------------------------------------
+
+def step_approach(node, approach_pose, seed=None,
+                  confirm: bool = True) -> tuple[list, JointTrajectory] | None:
+    """현재 → approach 위치 이동.
+    Returns: (joint_values, trajectory) 또는 None.
+    trajectory는 step_go_home(approach_traj=...) 으로 역재생 가능.
+    """
+    jt = _plan(node, approach_pose, 'APPROACH', seed=seed, confirm=confirm)
+    if jt is None:
+        node.get_logger().error('[step_approach] 실패')
+        return None
+    _exec(node, jt)
+    return list(jt.points[-1].positions), jt
+
+
+def step_descend(node, target_pose, seed=None,
+                 confirm: bool = True) -> tuple[list, JointTrajectory] | None:
+    """approach → target (수직 하강).
+    Returns: (joint_values, trajectory) 또는 None.
+    trajectory는 step_lift(descend_traj=...) 으로 역재생 가능.
+    """
+    jt = _plan(node, target_pose, 'TARGET', seed=seed, confirm=confirm)
+    if jt is None:
+        node.get_logger().error('[step_descend] 실패')
+        return None
+    _exec(node, jt)
+    return list(jt.points[-1].positions), jt
+
+
+def step_lift(node, approach_pose, seed=None,
+              descend_traj: JointTrajectory | None = None,
+              confirm: bool = True) -> list | None:
+    """target → approach 복귀 (lift).
+    descend_traj가 있으면 역재생, 없으면 재계획.
+    """
+    if descend_traj is not None:
+        node.get_logger().info('[LIFT] 하강 궤적 역재생 (IK 재계산 없음)')
+        jt = reverse_trajectory(descend_traj)
+        if confirm:
+            print('\n  [LIFT] 하강 경로 역재생으로 상승')
+            if not node._confirm('  [LIFT] 실행하시겠습니까? (y/n): '):
+                print('  [LIFT] 취소됨.')
+                return None
+        _exec(node, jt)
+        return list(jt.points[-1].positions)
+
+    jt = _plan(node, approach_pose, 'LIFT', seed=seed, confirm=confirm)
+    if jt is None:
+        node.get_logger().error('[step_lift] 실패')
+        return None
+    _exec(node, jt)
+    return list(jt.points[-1].positions)
+
+
+def step_move_to_pose(node, pose, label: str,
+                      seed=None, confirm: bool = False,
+                      post_delay: float = 0.5) -> list | None:
+    """임의 pose로 이동 (자동 동작 세트용)."""
+    jt = _plan(node, pose, label, seed=seed, confirm=confirm)
+    if jt is None:
+        node.get_logger().error(f'[{label}] 이동 실패')
+        return None
+    _exec(node, jt, post_delay=post_delay if not confirm else 0.0)
+    return list(jt.points[-1].positions)
+
+
+# ---------------------------------------------------------------------------
+# Home 이동
+# ---------------------------------------------------------------------------
+
+def step_go_home(node, confirm: bool = False,
+                 post_delay: float = 0.5,
+                 approach_traj: JointTrajectory | None = None) -> list:
+    """HOME 관절값으로 이동.
+    approach_traj가 있으면 역재생 (100% 성공), 없으면 OMPL/direct fallback.
+    """
+    from robot_executor import HOME_JOINT_NAMES, HOME_JOINT_VALUES
+
+    if approach_traj is not None:
+        node.get_logger().info('[HOME] approach 역재생으로 복귀 (IK 재계산 없음)')
+        jt = reverse_trajectory(approach_traj)
+        if confirm:
+            print('\n  [HOME] approach 경로 역재생으로 복귀')
+            if not node._confirm('  [HOME] 실행하시겠습니까? (y/n): '):
+                print('  [HOME] 취소됨.')
+                return list(HOME_JOINT_VALUES)
+        _exec(node, jt, post_delay=post_delay if not confirm else 0.0)
+        node.get_logger().info('[HOME] 완료')
+        return list(HOME_JOINT_VALUES)
+
+    node.get_logger().info('[step_go_home] 홈 이동 중...')
+    res = node._plan_joints(HOME_JOINT_NAMES, HOME_JOINT_VALUES, 'HOME')
+    if res is not None:
+        jt = res.planned_trajectory.joint_trajectory
+        if confirm:
+            node._display_trajectory(res.trajectory_start, res.planned_trajectory, 'HOME')
+            if not node._confirm('  [HOME] 초기자세로 이동하시겠습니까? (y/n): '):
+                print('  [HOME] 취소됨.')
+                return list(HOME_JOINT_VALUES)
+    else:
+        node.get_logger().warning('[HOME] MoveGroup 실패 → direct trajectory')
+        jt = node._make_joint_traj(list(HOME_JOINT_VALUES))
+        if confirm and not node._confirm('  [HOME-fallback] 초기자세로 이동하시겠습니까? (y/n): '):
+            print('  [HOME] 취소됨.')
+            return list(HOME_JOINT_VALUES)
+    _exec(node, jt, post_delay=post_delay if not confirm else 0.0)
+    node.get_logger().info('[step_go_home] 완료')
+    return list(HOME_JOINT_VALUES)
+
+
+# ---------------------------------------------------------------------------
+# Hand steps
+# ---------------------------------------------------------------------------
+
+def step_init_hand(node) -> None:
+    """핸드를 HAND_INIT_ENC (대기/충돌회피 자세) 로 이동 (확인 없음)."""
+    from utils.hand import HAND_INIT_ENC, HAND_STEPS, HAND_PERIOD
+    from std_msgs.msg import Int16MultiArray
+
+    start  = node._last_hand_enc if node._last_hand_enc else list(HAND_INIT_ENC)
+    target = list(HAND_INIT_ENC)
+
+    if max(abs(s - t) for s, t in zip(start, target)) < 50:
+        return  # 이미 충분히 가까움
+
+    node.get_logger().info('[HAND_INIT] 대기 자세로 이동...')
+    for i in range(1, HAND_STEPS + 1):
+        alpha  = i / HAND_STEPS
+        interp = [max(-32768, min(32767, int(round(s + alpha * (g - s)))))
+                  for s, g in zip(start, target)]
+        msg      = Int16MultiArray()
+        msg.data = interp
+        node._hand_pub.publish(msg)
+        if i < HAND_STEPS:
+            time.sleep(HAND_PERIOD)
+    node._last_hand_enc = list(HAND_INIT_ENC)
+    node.get_logger().info('[HAND_INIT] 완료')
+
+
+def step_close_hand(node, enc: list, confirm: bool = True) -> bool:
+    """손 파지. Returns True(실행) / False(취소)."""
+    if confirm and not node._confirm('  [HAND] 손가락 파지하시겠습니까? (y/n): '):
+        print('  [HAND] 취소됨.')
+        return False
+    node._exec_hand(enc)
+    return True
+
+
+def step_release_hand(node, confirm: bool = False) -> None:
+    """손 열기 (기본 확인 없음)."""
+    if confirm and not node._confirm('  [RELEASE] 물체를 놓겠습니까? (y/n): '):
+        print('  [RELEASE] 건너뜀.')
+        return
+    node._do_release_hand()
+
+
+def step_place_from_home(node, place_z_descent: float) -> bool:
+    """HOME → 하강 (Cartesian 계획) → release → 상승 (역재생 HOME 복귀).
+
+    흐름:
+      (HOME) → PLACE_DESCENT [Cartesian 계획, 1회만]
+             → RELEASE
+             → PLACE_ASCENT  [역재생, planning 없음]
+             → (HOME)
+
+    step_go_home()가 이미 HOME에 도착한 상태에서 호출해야 한다.
+    완료 후 별도 step_go_home() 불필요.
+
+    Returns: True 성공, False 실패
+    """
+    from robot_executor import HOME_JOINT_VALUES
+
+    node.get_logger().info('[step_place_from_home] FK로 HOME EE 위치 계산 중...')
+    home_ee = node._compute_fk(list(HOME_JOINT_VALUES))
+    if home_ee is None:
+        node.get_logger().error('[step_place_from_home] FK 실패')
+        return False
+
+    x, y, home_z   = home_ee[0], home_ee[1], home_ee[2]
+    qx, qy, qz, qw = home_ee[3], home_ee[4], home_ee[5], home_ee[6]
+    place_z = home_z - place_z_descent
+    node.get_logger().info(
+        f'[step_place_from_home] HOME Z={home_z:.3f}m  '
+        f'descent={place_z_descent:.3f}m  place_z={place_z:.3f}m')
+
+    place_target = node._make_pose(x, y, place_z, qx, qy, qz, qw)
+
+    # 하강: Cartesian 계획 (1회)
+    descent_jt = _plan(node, place_target, 'PLACE_DESCENT', confirm=False)
+    if descent_jt is None:
+        node.get_logger().error('[step_place_from_home] PLACE_DESCENT 실패')
+        return False
+    _exec(node, descent_jt)
+
+    # 릴리즈
+    step_release_hand(node, confirm=False)
+
+    # 상승: 하강 역재생 → HOME 복귀 (planning 없음)
+    node.get_logger().info('[PLACE_ASCENT] 하강 역재생으로 HOME 복귀 (IK 재계산 없음)')
+    _exec(node, reverse_trajectory(descent_jt))
+
+    return True

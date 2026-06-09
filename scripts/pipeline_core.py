@@ -1,0 +1,274 @@
+#!/usr/bin/env python3
+"""Shared utilities for Grasp_fruit pipeline scripts.
+
+Provides:
+  - python_bin / run_stage   : subprocess helpers
+  - add_*_args               : argparse group builders
+  - stage_capture            : RealSense → NPZ
+  - stage_sam3_only          : SAM3 text query → mask
+  - stage_qwen_sam3          : Qwen + SAM3 → mask
+  - stage_grasp              : top-down grasp → summary JSON
+  - stage_robot              : Docker exec → robot executor
+"""
+
+import subprocess
+import sys
+from pathlib import Path
+
+SCRIPTS = Path(__file__).resolve().parent
+ROOT    = SCRIPTS.parent
+
+DEFAULT_CONDA_BASE = Path("/home/kist/miniforge3")
+DEFAULT_ENV        = "grasp_fruit"
+
+
+# ---------------------------------------------------------------------------
+# Subprocess helpers
+# ---------------------------------------------------------------------------
+
+def python_bin(conda_base: Path, env_name: str) -> Path:
+    p = conda_base / "envs" / env_name / "bin" / "python"
+    if not p.exists():
+        raise FileNotFoundError(
+            f"Python not found at {p}.\n"
+            f"  bash setup_pipeline_all.sh")
+    return p
+
+
+def run_stage(python: Path, script: Path, extra_args: list[str],
+              stage_name: str, on_error: str = 'exit') -> bool:
+    """Run one pipeline stage as a subprocess.
+
+    on_error:
+      'exit'     → sys.exit(returncode) on failure  (default)
+      'continue' → return False on failure
+    Returns True on success.
+    """
+    cmd = [str(python), str(script)] + extra_args
+    print(f"\n{'='*60}")
+    print(f"  {stage_name}")
+    print(f"  cmd: {' '.join(cmd)}")
+    print(f"{'='*60}")
+    result = subprocess.run(cmd)
+    if result.returncode != 0:
+        print(f"\n[ERROR] {stage_name} 실패 (exit {result.returncode}).")
+        if on_error == 'exit':
+            sys.exit(result.returncode)
+        return False
+    return True
+
+
+# ---------------------------------------------------------------------------
+# argparse helpers
+# ---------------------------------------------------------------------------
+
+def add_conda_args(p) -> None:
+    p.add_argument("--conda_base", default=str(DEFAULT_CONDA_BASE))
+    p.add_argument("--env",        default=DEFAULT_ENV)
+
+
+def add_camera_args(p) -> None:
+    cam = p.add_argument_group("Camera (RealSense)")
+    cam.add_argument("--warmup_frames",  type=int, default=30)
+    cam.add_argument("--camera_width",   type=int, default=640)
+    cam.add_argument("--camera_height",  type=int, default=480)
+    cam.add_argument("--camera_fps",     type=int, default=30)
+    cam.add_argument("--camera_raw_dir", default=str(ROOT / "data" / "raw"))
+
+
+def add_qwen_args(p, max_new_tokens: int = 256) -> None:
+    p.add_argument("--qwen_model_id",       default="Qwen/Qwen2.5-VL-7B-Instruct")
+    p.add_argument("--qwen_device_map",     default="auto")
+    p.add_argument("--qwen_torch_dtype",    default="bfloat16",
+                   choices=["auto", "bfloat16", "float16", "float32"])
+    p.add_argument("--qwen_max_new_tokens", type=int, default=max_new_tokens)
+
+
+def add_sam3_args(p) -> None:
+    p.add_argument("--sam3_model_id",       default="facebook/sam3")
+    p.add_argument("--sam3_threshold",      type=float, default=0.5)
+    p.add_argument("--sam3_mask_threshold", type=float, default=0.5)
+
+
+def add_grasp_args(p, z_offset: float = 0.14) -> None:
+    gsp = p.add_argument_group("Grasp")
+    gsp.add_argument("--depth_scale", type=float, default=1.0)
+    gsp.add_argument("--z_offset",    type=float, default=z_offset)
+    gsp.add_argument("--hand_pose",   default=None, metavar="JSON")
+    gsp.add_argument("--calibration", default=None, metavar="JSON")
+    gsp.add_argument("--robot_base_x",     type=float, default=None)
+    gsp.add_argument("--robot_base_y",     type=float, default=None)
+    gsp.add_argument("--robot_base_z",     type=float, default=None)
+    gsp.add_argument("--robot_base_roll",  type=float, default=None)
+    gsp.add_argument("--robot_base_pitch", type=float, default=None)
+    gsp.add_argument("--robot_base_yaw",   type=float, default=None)
+    gsp.add_argument("--preview",     action="store_true")
+
+
+def add_robot_args(p) -> None:
+    rob = p.add_argument_group("Robot")
+    rob.add_argument("--execute_robot",   action="store_true")
+    rob.add_argument("--execute_mode",    default="direct_franka_topic",
+                     choices=["trajectory_forwarder", "direct_franka_topic"])
+    rob.add_argument("--speed_factor",    type=float, default=0.1)
+    rob.add_argument("--approach_offset", type=float, default=0.10)
+    rob.add_argument("--place_z_descent", type=float, default=None,
+                     help="HOME EE Z 에서 하강 거리 (m). 지정 시 place 모드.")
+    rob.add_argument("--kistar_ws",
+                     default="/home/kist/HARILAB/dex_ros/isaac-ros/kistar_ws")
+
+
+# ---------------------------------------------------------------------------
+# Stage functions
+# ---------------------------------------------------------------------------
+
+def stage_capture(python: Path, args, stem: str, output_dir: Path,
+                  warmup_frames: int = None,
+                  on_error: str = 'exit') -> 'Path | None':
+    """RealSense 캡처 → NPZ. 성공 시 NPZ Path, 실패 시 None (on_error='continue') 또는 sys.exit."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    wf = warmup_frames if warmup_frames is not None else args.warmup_frames
+    ok = run_stage(python, SCRIPTS / "capture_realsense_once.py", [
+        "--output_dir",    str(output_dir),
+        "--stem",          stem,
+        "--width",         str(args.camera_width),
+        "--height",        str(args.camera_height),
+        "--fps",           str(args.camera_fps),
+        "--warmup_frames", str(wf),
+    ], f"Capture: {stem}", on_error=on_error)
+    if not ok:
+        return None
+    npz = output_dir / f"{stem}_000.npz"
+    if not npz.exists():
+        print(f"[ERROR] 캡처된 NPZ 없음: {npz}")
+        if on_error == 'exit':
+            sys.exit(1)
+        return None
+    return npz
+
+
+def stage_sam3_only(python: Path, args, input_path: Path, output_dir: Path,
+                    query: str = None,
+                    on_error: str = 'exit') -> 'Path | None':
+    """SAM3 text query → mask PNG. 실패 시 None 또는 sys.exit."""
+    q = query if query is not None else args.query
+    output_dir.mkdir(parents=True, exist_ok=True)
+    ok = run_stage(python, SCRIPTS / "run_sam3_only_stage.py", [
+        "--input",               str(input_path),
+        "--query",               q,
+        "--sam3_model_id",       args.sam3_model_id,
+        "--sam3_threshold",      str(args.sam3_threshold),
+        "--sam3_mask_threshold", str(args.sam3_mask_threshold),
+        "--output_dir",          str(output_dir),
+    ], f"SAM3-only: {q!r}", on_error=on_error)
+    if not ok:
+        return None
+    mask = output_dir / f"{input_path.stem}_mask.png"
+    if not mask.exists():
+        print(f"[ERROR] 마스크 없음: {mask}")
+        if on_error == 'exit':
+            sys.exit(1)
+        return None
+    return mask
+
+
+def stage_qwen_sam3(python: Path, args, input_path: Path, output_dir: Path,
+                    on_error: str = 'exit') -> 'Path | None':
+    """Qwen + SAM3 → mask PNG. 실패 시 None 또는 sys.exit."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    ok = run_stage(python, SCRIPTS / "run_qwen_sam3_stage.py", [
+        "--input",                str(input_path),
+        "--instruction",          args.instruction,
+        "--qwen_model_id",        args.qwen_model_id,
+        "--qwen_device_map",      args.qwen_device_map,
+        "--qwen_torch_dtype",     args.qwen_torch_dtype,
+        "--qwen_max_new_tokens",  str(args.qwen_max_new_tokens),
+        "--sam3_model_id",        args.sam3_model_id,
+        "--sam3_threshold",       str(args.sam3_threshold),
+        "--sam3_mask_threshold",  str(args.sam3_mask_threshold),
+        "--output_dir",           str(output_dir),
+    ], "Qwen+SAM3", on_error=on_error)
+    if not ok:
+        return None
+    mask = output_dir / f"{input_path.stem}_mask.png"
+    if not mask.exists():
+        print(f"[ERROR] 마스크 없음: {mask}")
+        if on_error == 'exit':
+            sys.exit(1)
+        return None
+    return mask
+
+
+def stage_grasp(python: Path, args, input_path: Path,
+                mask_path: Path, output_dir: Path,
+                on_error: str = 'exit') -> 'Path | None':
+    """Top-down grasp 계산 → summary JSON. 실패 시 None 또는 sys.exit."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    stage_args = [
+        "--input",       str(input_path),
+        "--mask",        str(mask_path),
+        "--depth_scale", str(args.depth_scale),
+        "--z_offset",    str(args.z_offset),
+        "--output",      str(output_dir),
+    ]
+    if args.calibration:
+        stage_args += ["--calibration", args.calibration]
+    if getattr(args, 'hand_pose', None):
+        stage_args += ["--hand_pose", args.hand_pose]
+    rbase = {
+        "--robot_base_x":     getattr(args, 'robot_base_x', None),
+        "--robot_base_y":     getattr(args, 'robot_base_y', None),
+        "--robot_base_z":     getattr(args, 'robot_base_z', None),
+        "--robot_base_roll":  getattr(args, 'robot_base_roll', None),
+        "--robot_base_pitch": getattr(args, 'robot_base_pitch', None),
+        "--robot_base_yaw":   getattr(args, 'robot_base_yaw', None),
+    }
+    if all(v is not None for v in rbase.values()):
+        for flag, val in rbase.items():
+            stage_args += [flag, str(val)]
+    if getattr(args, 'preview', False):
+        stage_args += ["--preview"]
+
+    ok = run_stage(python, SCRIPTS / "run_topdown_grasp.py",
+                   stage_args, f"Grasp: {input_path.stem}", on_error=on_error)
+    if not ok:
+        return None
+    grasp_json = output_dir / f"{input_path.stem}_topdown_summary.json"
+    if not grasp_json.exists():
+        print(f"[ERROR] grasp summary 없음: {grasp_json}")
+        if on_error == 'exit':
+            sys.exit(1)
+        return None
+    return grasp_json
+
+
+def stage_robot(python: Path, args, grasp_json: Path,
+                label: str = '', on_error: str = 'exit') -> bool:
+    """로봇 실행 (Docker exec).
+
+    executor 선택:
+      args.place_xyz        → send_to_robot_demo.py   (절대 base frame 좌표)
+      args.place_z_descent  → send_to_robot_place.py  (HOME 기준 하강)
+      (없음)                → send_to_robot.py         (grasp-only)
+    """
+    robot_args = [
+        "--summary_json",    str(grasp_json),
+        "--execute_mode",    args.execute_mode,
+        "--speed_factor",    str(args.speed_factor),
+        "--approach_offset", str(args.approach_offset),
+        "--kistar_ws",       args.kistar_ws,
+    ]
+    place_xyz = getattr(args, 'place_xyz', None)
+    place_z   = getattr(args, 'place_z_descent', None)
+
+    if place_xyz is not None:
+        robot_args += ["--place_xyz"] + [str(v) for v in place_xyz]
+        script, mode = SCRIPTS / "send_to_robot_demo.py",  "Place (demo)"
+    elif place_z is not None:
+        robot_args += ["--place_z_descent", str(place_z)]
+        script, mode = SCRIPTS / "send_to_robot_place.py", "Place"
+    else:
+        script, mode = SCRIPTS / "send_to_robot.py",       "Grasp"
+
+    name = f"Robot ({mode})" + (f" {label}" if label else "")
+    return run_stage(python, script, robot_args, name, on_error=on_error)
