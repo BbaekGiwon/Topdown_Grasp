@@ -1,27 +1,21 @@
 #!/usr/bin/env python3
 """
-Grasp_fruit pipeline: (RealSense 캡처 또는 파일 입력) → [Qwen2.5-VL →] SAM3 → Top-down Grasp → (로봇 실행)
+Grasp_fruit pipeline: (RealSense 캡처 또는 파일 입력) → SAM3 → Top-down Grasp → (로봇 실행)
 
-[Qwen+SAM3 — 파일 입력]
-    python scripts/run_pipeline.py \\
-        --input data/raw/scene.npz \\
-        --instruction "grab the apple" \\
-        --calibration configs/calibration/PRIME_FR3_extrinsic_result_0313.json
-
-[SAM3-only — 파일 입력 (빠름)]
+[파일 입력]
     python scripts/run_pipeline.py \\
         --input data/raw/scene.npz \\
         --query "apple" \\
         --calibration configs/calibration/PRIME_FR3_extrinsic_result_0313.json
 
-[카메라 캡처 + SAM3-only + 로봇]
+[카메라 캡처 + 로봇]
     python scripts/run_pipeline.py \\
         --capture \\
         --query "apple" \\
         --calibration configs/calibration/PRIME_FR3_extrinsic_result_0313.json \\
         --execute_robot
 
-[카메라 캡처 + SAM3-only + Place]
+[카메라 캡처 + Place]
     python scripts/run_pipeline.py \\
         --capture \\
         --query "apple" \\
@@ -36,9 +30,9 @@ from pathlib import Path
 from pipeline_core import (
     ROOT,
     python_bin,
-    add_conda_args, add_camera_args, add_qwen_args, add_sam3_args,
+    add_conda_args, add_camera_args, add_sam3_args,
     add_grasp_args, add_robot_args,
-    stage_capture, stage_sam3_only, stage_qwen_sam3, stage_grasp, stage_robot,
+    stage_capture, stage_sam3_only, stage_grasp, stage_robot,
 )
 
 
@@ -55,13 +49,10 @@ def build_parser():
     p.add_argument("--camera_stem", default="capture",
                    help="캡처 파일 stem (default: capture → capture_000.npz)")
 
-    vis = p.add_mutually_exclusive_group(required=True)
-    vis.add_argument("--instruction", help="Qwen+SAM3 모드: 자연어 지시문")
-    vis.add_argument("--query",       help="SAM3-only 모드: 텍스트 쿼리 (Qwen 생략)")
+    p.add_argument("--query", required=True, help="SAM3 텍스트 쿼리 (예: apple)")
 
     add_conda_args(p)
     add_camera_args(p)
-    add_qwen_args(p)
     add_sam3_args(p)
     add_grasp_args(p)
     add_robot_args(p)
@@ -84,10 +75,7 @@ def main():
         input_path = Path(args.input)
 
     # ── Stage 1: 비전 ───────────────────────────────────────────────────────
-    if args.instruction:
-        mask_path = stage_qwen_sam3(python, args, input_path, interim)
-    else:
-        mask_path = stage_sam3_only(python, args, input_path, interim)
+    mask_path = stage_sam3_only(python, args, input_path, interim)
 
     # ── Stage 2: Grasp ──────────────────────────────────────────────────────
     grasp_json = stage_grasp(python, args, input_path, mask_path, outputs)
@@ -100,10 +88,7 @@ def main():
     print(f"\n{'='*60}")
     print("  Pipeline complete")
     print(f"  Input  : {input_path}")
-    if args.instruction:
-        print(f"  Mode   : Qwen+SAM3  ({args.instruction!r})")
-    else:
-        print(f"  Mode   : SAM3-only  ({args.query!r})")
+    print(f"  Query  : {args.query!r}")
     print(f"  Output : {grasp_json}")
 
     if grasp_json.exists():

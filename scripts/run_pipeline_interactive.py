@@ -197,14 +197,11 @@ def main():
             cv2.imwrite(str(overlay_path),
                         cv2.addWeighted(ov, 0.45, canvas, 0.55, 0.0))
 
-            # pipeline 호환 JSON
-            sam3_json = interim / f"{input_stem}_qwen_sam3.json"
+            sam3_json = interim / f"{input_stem}_sam3.json"
             with open(sam3_json, "w") as f:
                 json.dump({
                     "stem":  input_stem,
                     "query": query,
-                    "qwen":  {"task": "", "object": query,
-                              "object_part": "", "affordance": ""},
                     "sam3":  {
                         "model":       args.sam3_model_id,
                         "used_query":  query,

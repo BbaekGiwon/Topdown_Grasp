@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-SAM3-only segmentation stage (Qwen 없이 직접 텍스트 쿼리).
+SAM3 segmentation stage — 텍스트 쿼리로 마스크 생성.
 
 Input:  RGB-D NPZ bundle (keys: rgb, depth, K)  OR  a plain RGB image
-Output: binary mask PNG  +  JSON summary  (run_qwen_sam3_stage.py 와 동일 포맷)
+Output: binary mask PNG  +  JSON summary
 
 Usage:
     python scripts/run_sam3_only_stage.py \
@@ -19,7 +19,7 @@ Usage:
 Output files:
     {output_dir}/{stem}_mask.png          — binary mask (255=object, 0=background)
     {output_dir}/{stem}_overlay.png       — visualisation overlay
-    {output_dir}/{stem}_qwen_sam3.json    — SAM3 info (pipeline 호환 포맷)
+    {output_dir}/{stem}_sam3.json         — SAM3 결과 JSON
 """
 
 import argparse
@@ -212,16 +212,9 @@ def main():
     cv2.imwrite(str(overlay_path), draw_overlay(image_rgb, args.query, sam3))
     print(f"Saved overlay: {overlay_path}")
 
-    # run_pipeline.py 호환 포맷 (qwen 키 포함)
     summary = {
         "stem":        stem,
         "query":       args.query,
-        "qwen": {
-            "task":        "",
-            "object":      args.query,
-            "object_part": "",
-            "affordance":  "",
-        },
         "sam3": {
             "model":         args.sam3_model_id,
             "queries_tried": sam3.get("queries_tried", []),
@@ -236,7 +229,7 @@ def main():
             "overlay": str(overlay_path),
         },
     }
-    json_path = out_dir / f"{stem}_qwen_sam3.json"
+    json_path = out_dir / f"{stem}_sam3.json"
     with open(json_path, "w") as f:
         json.dump(summary, f, indent=2, ensure_ascii=False)
     print(f"Saved JSON:  {json_path}")

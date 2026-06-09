@@ -6,7 +6,6 @@ Provides:
   - add_*_args               : argparse group builders
   - stage_capture            : RealSense → NPZ
   - stage_sam3_only          : SAM3 text query → mask
-  - stage_qwen_sam3          : Qwen + SAM3 → mask
   - stage_grasp              : top-down grasp → summary JSON
   - stage_robot              : Docker exec → robot executor
 """
@@ -74,14 +73,6 @@ def add_camera_args(p) -> None:
     cam.add_argument("--camera_height",  type=int, default=480)
     cam.add_argument("--camera_fps",     type=int, default=30)
     cam.add_argument("--camera_raw_dir", default=str(ROOT / "data" / "raw"))
-
-
-def add_qwen_args(p, max_new_tokens: int = 256) -> None:
-    p.add_argument("--qwen_model_id",       default="Qwen/Qwen2.5-VL-7B-Instruct")
-    p.add_argument("--qwen_device_map",     default="auto")
-    p.add_argument("--qwen_torch_dtype",    default="bfloat16",
-                   choices=["auto", "bfloat16", "float16", "float32"])
-    p.add_argument("--qwen_max_new_tokens", type=int, default=max_new_tokens)
 
 
 def add_sam3_args(p) -> None:
@@ -172,33 +163,6 @@ def stage_sam3_only(python: Path, args, input_path: Path, output_dir: Path,
     return mask
 
 
-def stage_qwen_sam3(python: Path, args, input_path: Path, output_dir: Path,
-                    on_error: str = 'exit') -> 'Path | None':
-    """Qwen + SAM3 → mask PNG. 실패 시 None 또는 sys.exit."""
-    output_dir.mkdir(parents=True, exist_ok=True)
-    ok = run_stage(python, SCRIPTS / "run_qwen_sam3_stage.py", [
-        "--input",                str(input_path),
-        "--instruction",          args.instruction,
-        "--qwen_model_id",        args.qwen_model_id,
-        "--qwen_device_map",      args.qwen_device_map,
-        "--qwen_torch_dtype",     args.qwen_torch_dtype,
-        "--qwen_max_new_tokens",  str(args.qwen_max_new_tokens),
-        "--sam3_model_id",        args.sam3_model_id,
-        "--sam3_threshold",       str(args.sam3_threshold),
-        "--sam3_mask_threshold",  str(args.sam3_mask_threshold),
-        "--output_dir",           str(output_dir),
-    ], "Qwen+SAM3", on_error=on_error)
-    if not ok:
-        return None
-    mask = output_dir / f"{input_path.stem}_mask.png"
-    if not mask.exists():
-        print(f"[ERROR] 마스크 없음: {mask}")
-        if on_error == 'exit':
-            sys.exit(1)
-        return None
-    return mask
-
-
 def stage_grasp(python: Path, args, input_path: Path,
                 mask_path: Path, output_dir: Path,
                 on_error: str = 'exit') -> 'Path | None':
@@ -258,13 +222,9 @@ def stage_robot(python: Path, args, grasp_json: Path,
         "--approach_offset", str(args.approach_offset),
         "--kistar_ws",       args.kistar_ws,
     ]
-    place_xyz = getattr(args, 'place_xyz', None)
-    place_z   = getattr(args, 'place_z_descent', None)
+    place_z = getattr(args, 'place_z_descent', None)
 
-    if place_xyz is not None:
-        robot_args += ["--place_xyz"] + [str(v) for v in place_xyz]
-        script, mode = SCRIPTS / "send_to_robot_demo.py",  "Place (demo)"
-    elif place_z is not None:
+    if place_z is not None:
         robot_args += ["--place_z_descent", str(place_z)]
         script, mode = SCRIPTS / "send_to_robot_place.py", "Place"
     else:
