@@ -12,8 +12,9 @@ import argparse
 import sys
 from pathlib import Path
 
-SCRIPTS           = Path(__file__).resolve().parent
-DEFAULT_KISTAR_WS = "/home/kist/HARILAB/dex_ros/isaac-ros/kistar_ws"
+SCRIPTS = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPTS))
+from utils.paths import KISTAR_WS as DEFAULT_KISTAR_WS
 
 from docker_runner import (
     DOCKER_CONTAINER,

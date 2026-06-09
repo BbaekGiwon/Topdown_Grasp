@@ -16,18 +16,15 @@ import sys
 import threading
 from pathlib import Path
 
-ROOT             = Path(__file__).resolve().parents[1]
-DOCKER_CONTAINER = "ros2_humble"
-
-_MOUNT_MAP = [
-    ("/home/kist/HARILAB", "/root/HARILAB"),
-    ("/home/kist/ros2_ws",  "/root/ros2_ws"),
-]
+ROOT    = Path(__file__).resolve().parents[1]
+SCRIPTS = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPTS))
+from utils.paths import DOCKER_CONTAINER, MOUNT_MAP as _MOUNT_MAP, ROS_DOMAIN_ID
 
 _ROS_ENV_PREFIX = (
     "unset PYTHONPATH PYTHONHOME CONDA_PREFIX CONDA_DEFAULT_ENV CONDA_PROMPT_MODIFIER && "
     "export PATH=/usr/sbin:/usr/bin:/sbin:/bin:/opt/ros/humble/bin && "
-    "export ROS_DOMAIN_ID=9 && "
+    f"export ROS_DOMAIN_ID={ROS_DOMAIN_ID} && "
     "export RMW_IMPLEMENTATION=rmw_fastrtps_cpp && "
     "export ROS_LOCALHOST_ONLY=0"
 )

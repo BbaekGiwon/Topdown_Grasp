@@ -14,11 +14,20 @@ import subprocess
 import sys
 from pathlib import Path
 
+import yaml
+
 SCRIPTS = Path(__file__).resolve().parent
 ROOT    = SCRIPTS.parent
 
-DEFAULT_CONDA_BASE = Path("/home/kist/miniforge3")
-DEFAULT_ENV        = "grasp_fruit"
+sys.path.insert(0, str(SCRIPTS))
+from utils.paths import CONDA_BASE as DEFAULT_CONDA_BASE, CONDA_ENV as DEFAULT_ENV, KISTAR_WS as DEFAULT_KISTAR_WS
+
+# configs/camera/realsense.yaml
+_rs_cfg = yaml.safe_load((ROOT / "configs" / "camera" / "realsense.yaml").read_text())
+_CAM_WIDTH   = int(_rs_cfg["width"])
+_CAM_HEIGHT  = int(_rs_cfg["height"])
+_CAM_FPS     = int(_rs_cfg["fps"])
+_CAM_WARMUP  = int(_rs_cfg["warmup_frames"])
 
 
 # ---------------------------------------------------------------------------
@@ -67,11 +76,11 @@ def add_conda_args(p) -> None:
 
 
 def add_camera_args(p) -> None:
-    cam = p.add_argument_group("Camera (RealSense)")
-    cam.add_argument("--warmup_frames",  type=int, default=30)
-    cam.add_argument("--camera_width",   type=int, default=640)
-    cam.add_argument("--camera_height",  type=int, default=480)
-    cam.add_argument("--camera_fps",     type=int, default=30)
+    cam = p.add_argument_group("Camera (RealSense) — defaults from configs/camera/realsense.yaml")
+    cam.add_argument("--warmup_frames",  type=int, default=_CAM_WARMUP)
+    cam.add_argument("--camera_width",   type=int, default=_CAM_WIDTH)
+    cam.add_argument("--camera_height",  type=int, default=_CAM_HEIGHT)
+    cam.add_argument("--camera_fps",     type=int, default=_CAM_FPS)
     cam.add_argument("--camera_raw_dir", default=str(ROOT / "data" / "raw"))
 
 
@@ -105,8 +114,7 @@ def add_robot_args(p) -> None:
     rob.add_argument("--approach_offset", type=float, default=0.10)
     rob.add_argument("--place_z_descent", type=float, default=None,
                      help="HOME EE Z 에서 하강 거리 (m). 지정 시 place 모드.")
-    rob.add_argument("--kistar_ws",
-                     default="/home/kist/HARILAB/dex_ros/isaac-ros/kistar_ws")
+    rob.add_argument("--kistar_ws", default=DEFAULT_KISTAR_WS)
 
 
 # ---------------------------------------------------------------------------
