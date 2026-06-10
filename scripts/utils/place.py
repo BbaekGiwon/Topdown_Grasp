@@ -1,41 +1,21 @@
 #!/usr/bin/env python3
 """
-Pick → (Home → Place → Release → Home) executor.
+PlaceExecutor — Pick → Home → Place → Release → Home.
 
-실행 흐름:
-  [확인 있음]  STEP 1-4: Approach → Target → Hand → Lift
-  [자동 세트]  STEP 5:   HOME
-               STEP 6:   PLACE APPROACH  (HOME EE XY, place_z + approach_offset)
-               STEP 7:   PLACE DESCENT   (HOME EE XY, place_z)
-               STEP 8:   RELEASE
-               STEP 9:   HOME
+STEP 1-4 : Grasp (y/n 확인)
+STEP 5-9 : Home → Place → Release → Home (자동)
 
-place 위치 = HOME 에서 world Z 축으로 하강.
-X,Y 는 HOME EE 위치 그대로, Z 만 --place_z 로 지정.
-
-Usage:
-    python3 scripts/robot_executor_place.py \\
-        --summary_json data/outputs/scene_topdown_summary.json \\
-        --place_z_descent 0.30 \\
-        [--approach_offset 0.10]
+place 위치 = HOME EE XY 그대로, Z 만 place_z_descent 만큼 하강.
 """
 
-import argparse
-import json
 import sys
 import time
 from pathlib import Path
 
-SCRIPTS = Path(__file__).resolve().parent
+SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
 
-import rclpy
-from rclpy.executors import MultiThreadedExecutor
-
-from robot_executor import (
-    GraspExecutor,
-    world_to_base,
-)
+from utils.grasp import GraspExecutor, world_to_base
 from utils.step import (
     step_approach, step_descend, step_lift,
     step_init_hand, step_close_hand, step_release_hand, step_go_home,
@@ -43,7 +23,7 @@ from utils.step import (
 )
 
 
-class PickPlaceViaHomeExecutor(GraspExecutor):
+class PlaceExecutor(GraspExecutor):
     """
     STEP 1-4 : Grasp (y/n 확인)
     STEP 5-9 : Home → Place → Release → Home (자동)
@@ -80,8 +60,8 @@ class PickPlaceViaHomeExecutor(GraspExecutor):
         print('=' * 60)
 
         time.sleep(1.0)
-        step_init_hand(self)              # 핸드 초기 자세 (j3=굽힘, 충돌 회피)
-        step_go_home(self, confirm=False) # 팔 초기자세로 이동
+        step_init_hand(self)
+        step_go_home(self, confirm=False)
         target   = self._make_pose(*xyz_b,     *quat_b)
         approach = self._make_pose(*xyz_b_app, *quat_b_app)
 
@@ -89,7 +69,7 @@ class PickPlaceViaHomeExecutor(GraspExecutor):
         result = step_approach(self, approach, confirm=True)
         if result is None: return
         j1, approach_traj = result
-        self._approach_traj = approach_traj   # _finalize 역재생용
+        self._approach_traj = approach_traj
 
         result = step_descend(self, target, seed=j1, confirm=True)
         if result is None: return
@@ -107,15 +87,13 @@ class PickPlaceViaHomeExecutor(GraspExecutor):
         print('  [AUTO] Home → Place → Release → Home')
         print('─' * 60)
 
-        step_go_home(self, confirm=False, approach_traj=approach_traj)  # approach 역재생
+        step_go_home(self, confirm=False, approach_traj=approach_traj)
 
-        ok = step_place_from_home(self,
-                                  place_z_descent=self._place_z_descent)
+        ok = step_place_from_home(self, place_z_descent=self._place_z_descent)
         if not ok:
             self.get_logger().error('Place 실패')
             return
-        # step_place_from_home 내부에서 하강 역재생으로 HOME 복귀 완료
-        step_init_hand(self)              # release 후 충돌 회피 자세로 복귀
+        step_init_hand(self)
 
         self._success = True
         print('\n  [OK] Pick-Place-via-Home 완료')
@@ -130,53 +108,3 @@ class PickPlaceViaHomeExecutor(GraspExecutor):
             print('  ⚠  실행이 중단되었습니다.')
             step_release_hand(self, confirm=True)
             step_go_home(self, confirm=True)
-
-
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
-
-def parse_args():
-    p = argparse.ArgumentParser(description=__doc__,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument('--summary_json', required=True)
-    p.add_argument('--execute_mode', default='direct_franka_topic',
-                   choices=['trajectory_forwarder', 'direct_franka_topic'])
-    p.add_argument('--speed_factor',    type=float, default=0.1)
-    p.add_argument('--approach_offset', type=float, default=0.10)
-    p.add_argument('--place_z_descent', type=float, required=True,
-                   help='HOME EE Z 에서 내려갈 거리 (m). 양수 = 아래 방향.')
-    return p.parse_args()
-
-
-def main():
-    args = parse_args()
-    with open(args.summary_json) as f:
-        summary = json.load(f)
-
-    rclpy.init()
-    node = PickPlaceViaHomeExecutor(
-        summary,
-        args.execute_mode,
-        args.speed_factor,
-        args.approach_offset,
-        place_z_descent=args.place_z_descent,
-        summary_json_path=args.summary_json,
-    )
-    executor = MultiThreadedExecutor()
-    executor.add_node(node)
-    try:
-        executor.spin()
-    except (KeyboardInterrupt, Exception):
-        pass
-    finally:
-        node._hold_hand_position(duration=2.0)
-        node.destroy_node()
-        if rclpy.ok():
-            rclpy.shutdown()
-
-    sys.exit(0 if node._success else 1)
-
-
-if __name__ == '__main__':
-    main()

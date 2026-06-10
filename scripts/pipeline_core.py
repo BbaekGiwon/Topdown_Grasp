@@ -216,27 +216,21 @@ def stage_grasp(python: Path, args, input_path: Path,
 
 def stage_robot(python: Path, args, grasp_json: Path,
                 label: str = '', on_error: str = 'exit') -> bool:
-    """로봇 실행 (Docker exec).
+    """로봇 실행 (Docker exec → send_to_robot.py --mode grasp|place)."""
+    place_z = getattr(args, 'place_z_descent', None)
+    mode    = 'place' if place_z is not None else 'grasp'
 
-    executor 선택:
-      args.place_xyz        → send_to_robot_demo.py   (절대 base frame 좌표)
-      args.place_z_descent  → send_to_robot_place.py  (HOME 기준 하강)
-      (없음)                → send_to_robot.py         (grasp-only)
-    """
     robot_args = [
         "--summary_json",    str(grasp_json),
+        "--mode",            mode,
         "--execute_mode",    args.execute_mode,
         "--speed_factor",    str(args.speed_factor),
         "--approach_offset", str(args.approach_offset),
         "--kistar_ws",       args.kistar_ws,
     ]
-    place_z = getattr(args, 'place_z_descent', None)
-
     if place_z is not None:
         robot_args += ["--place_z_descent", str(place_z)]
-        script, mode = SCRIPTS / "send_to_robot_place.py", "Place"
-    else:
-        script, mode = SCRIPTS / "send_to_robot.py",       "Grasp"
 
-    name = f"Robot ({mode})" + (f" {label}" if label else "")
-    return run_stage(python, script, robot_args, name, on_error=on_error)
+    name = f"Robot ({mode.capitalize()})" + (f" {label}" if label else "")
+    return run_stage(python, SCRIPTS / "send_to_robot.py",
+                     robot_args, name, on_error=on_error)
