@@ -33,8 +33,9 @@ PLANNING_TIME:  float = float(_cfg["planning"]["planning_time_sec"])
 HOME_JOINT_NAMES:  list[str]   = list(_cfg["home"]["joint_names"])
 HOME_JOINT_VALUES: list[float] = list(_cfg["home"]["joint_values"])
 
-# ── Approach 오프셋 ────────────────────────────────────────────────────────────
-APPROACH_OFFSET_M: float = float(_cfg["approach_offset_m"])
+# ── Approach / Place 오프셋 ───────────────────────────────────────────────────
+APPROACH_OFFSET_M:   float = float(_cfg["approach_offset_m"])
+PLACE_Z_DESCENT_M:   float = float(_cfg["place_z_descent_m"])
 
 # ── EE 자세 보정 ──────────────────────────────────────────────────────────────
 EE_YAW_DEG:   float = float(_cfg["ee_correction"]["yaw_deg"])

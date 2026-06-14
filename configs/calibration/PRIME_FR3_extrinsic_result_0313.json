@@ -1,5 +1,5 @@
 {
-  "_comment": "T_base_camera: camera → fr3_link0 (hand-eye calibration 2025-03-13)",
+  "_comment": "T_base_camera: camera → fr3_link0 (hand-eye calibration 2026-03-13)",
   "T_base_camera": [
     [ -0.0022093575409275912, -0.7574965456633328,  0.6528354325918395,  0.05792393954535857 ],
     [ -0.7061599279270264,    -0.4610598587447573,  -0.5373657626276174,  0.6366118371346883  ],

@@ -30,10 +30,12 @@ class PlaceExecutor(GraspExecutor):
     """
 
     def __init__(self, summary, execute_mode, speed_factor,
-                 approach_offset, place_z_descent, summary_json_path=''):
+                 approach_offset, place_z_descent, summary_json_path='',
+                 disable_collision: bool = False):
         self._place_z_descent = place_z_descent
         super().__init__(summary, execute_mode, speed_factor,
-                         approach_offset, summary_json_path=summary_json_path)
+                         approach_offset, summary_json_path=summary_json_path,
+                         disable_collision=disable_collision)
 
     def _execute(self):
         grasp  = self._summary['grasps'][0]
@@ -61,7 +63,7 @@ class PlaceExecutor(GraspExecutor):
 
         time.sleep(1.0)
         step_init_hand(self)
-        step_go_home(self, confirm=False)
+        step_go_home(self, confirm=True)
         target   = self._make_pose(*xyz_b,     *quat_b)
         approach = self._make_pose(*xyz_b_app, *quat_b_app)
 

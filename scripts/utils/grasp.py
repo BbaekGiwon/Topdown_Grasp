@@ -106,19 +106,24 @@ def world_to_base(T_world_base_list, xyz_world, quat_world_xyzw):
 class GraspExecutor(Node):
 
     def __init__(self, summary: dict, execute_mode: str, speed_factor: float,
-                 approach_offset: float, summary_json_path: str = ''):
+                 approach_offset: float, summary_json_path: str = '',
+                 disable_collision: bool = False):
         super().__init__('grasp_executor')
         self._summary           = summary
         self._mode              = execute_mode
         self._speed             = speed_factor
         self._approach_offset   = summary.get('approach_offset', approach_offset)
         self._summary_json_path = summary_json_path
+        self._disable_collision = disable_collision
         self._hand_deg          = None
         self._last_hand_enc     = None
         self._success           = False
         self._current_joints    = None
         self._approach_traj     = None
         self._cb_group          = ReentrantCallbackGroup()
+        if disable_collision:
+            self.get_logger().warning(
+                '[COLLISION] avoid_collisions=False 모드 — collision 검사 비활성화')
         self._setup_ros()
         self._thread = threading.Thread(target=self._run_guarded, daemon=True)
         self._thread.start()
@@ -137,11 +142,11 @@ class GraspExecutor(Node):
             DisplayTrajectory, '/display_planned_path', 10)
         self._hand_pub = self.create_publisher(
             Int16MultiArray, '/hand/target_joint', 10)
-        _hand_qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
+        _be_qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
         self.create_subscription(Float32MultiArray, '/hand/joint_position',
-                                 self._hand_cb, _hand_qos)
+                                 self._hand_cb, _be_qos)
         self.create_subscription(Float64MultiArray, '/franka/joint_position',
-                                 self._franka_joint_cb, 10)
+                                 self._franka_joint_cb, _be_qos)
         self._franka_target_pub = self.create_publisher(
             Float64MultiArray, '/franka/target_joint', 10)
         self._franka_speed_pub  = self.create_publisher(
@@ -260,7 +265,7 @@ class GraspExecutor(Node):
         req.waypoints        = [goal.pose]
         req.max_step         = max_step
         req.jump_threshold   = 0.0
-        req.avoid_collisions = True
+        req.avoid_collisions = not self._disable_collision
         if jnames is not None:
             req.start_state.is_diff = False
             req.start_state.joint_state.name     = list(jnames)
@@ -452,7 +457,7 @@ class GraspExecutor(Node):
         req.ik_request.group_name       = PLANNING_GROUP
         req.ik_request.ik_link_name     = EE_LINK
         req.ik_request.pose_stamped     = goal
-        req.ik_request.avoid_collisions = True
+        req.ik_request.avoid_collisions = not self._disable_collision
         req.ik_request.timeout.sec      = 1
         req.ik_request.timeout.nanosec  = 0
         req.ik_request.robot_state.joint_state.name     = HOME_JOINT_NAMES
@@ -464,6 +469,36 @@ class GraspExecutor(Node):
         res = future.result()
         if res.error_code.val != 1:
             self.get_logger().warning(f'[{label}] IK failed  code={res.error_code.val}')
+            # avoid_collisions=False 로 재시도해서 원인 진단 + joint 값 확인
+            req2 = GetPositionIK.Request()
+            req2.ik_request.group_name       = PLANNING_GROUP
+            req2.ik_request.ik_link_name     = EE_LINK
+            req2.ik_request.pose_stamped     = goal
+            req2.ik_request.avoid_collisions = False
+            req2.ik_request.timeout.sec      = 2
+            req2.ik_request.robot_state.joint_state.name     = HOME_JOINT_NAMES
+            req2.ik_request.robot_state.joint_state.position = [float(v) for v in seed_joints]
+            req2.ik_request.robot_state.is_diff              = False
+            f2 = self._ik_client.call_async(req2)
+            if self._wait(f2, 5.0) and f2.result().error_code.val == 1:
+                r2  = f2.result()
+                js2 = r2.solution.joint_state
+                jm2 = dict(zip(js2.name, js2.position))
+                jv2 = [jm2[n] for n in HOME_JOINT_NAMES]
+                self.get_logger().warning(
+                    f'[{label}] IK (no-collision) 성공 → collision scene이 차단 중')
+                print(f'  [DEBUG][{label}] IK target joints (avoid_collisions=False):')
+                for name, val in zip(HOME_JOINT_NAMES, jv2):
+                    print(f'    {name}: {val:.6f}  ({math.degrees(val):.2f}°)')
+                print(f'  [DEBUG][{label}] list: {[round(v, 6) for v in jv2]}')
+            else:
+                self.get_logger().warning(
+                    f'[{label}] IK (no-collision) 도 실패 → pose 자체가 도달 불가')
+                print(f'  [DEBUG][{label}] target pose (base frame):')
+                p = goal.pose.position
+                o = goal.pose.orientation
+                print(f'    xyz  = ({p.x:.4f}, {p.y:.4f}, {p.z:.4f})')
+                print(f'    quat = ({o.x:.4f}, {o.y:.4f}, {o.z:.4f}, {o.w:.4f})')
             return None
         js        = res.solution.joint_state
         joint_map = dict(zip(js.name, js.position))
@@ -754,7 +789,7 @@ class GraspExecutor(Node):
 
         time.sleep(1.0)
         step_init_hand(self)
-        step_go_home(self, confirm=False)
+        step_go_home(self, confirm=True)
         target   = self._make_pose(*xyz_b,     *quat_b)
         approach = self._make_pose(*xyz_b_app, *quat_b_app)
 

@@ -21,6 +21,7 @@ from pathlib import Path
 SCRIPTS = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS))
 from utils.paths import KISTAR_WS as DEFAULT_KISTAR_WS
+from utils.arm import PLACE_Z_DESCENT_M
 
 from docker_runner import (
     DOCKER_CONTAINER,
@@ -35,15 +36,14 @@ def parse_args():
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--summary_json",   required=True,
                    help="Path to topdown_summary.json (호스트 경로)")
-    p.add_argument("--mode",           default="grasp",
-                   choices=["grasp", "place"],
-                   help="grasp: grasp only  |  place: pick+place via HOME")
+    p.add_argument("--place", action="store_true",
+                   help=f"pick+place 모드. 하강 거리는 arm.yaml ({PLACE_Z_DESCENT_M} m) 사용")
     p.add_argument("--execute_mode",   default="direct_franka_topic",
                    choices=["trajectory_forwarder", "direct_franka_topic"])
     p.add_argument("--speed_factor",   type=float, default=0.1)
     p.add_argument("--approach_offset", type=float, default=0.10)
-    p.add_argument("--place_z_descent", type=float, default=None,
-                   help="[place mode] HOME EE Z 에서 하강 거리 (m). --mode place 시 필수.")
+    p.add_argument("--disable_collision", action="store_true",
+                   help="MoveIt collision 검사 비활성화 (base 이동 후 임시 테스트용)")
     p.add_argument("--container",  default=DOCKER_CONTAINER)
     p.add_argument("--kistar_ws",  default=DEFAULT_KISTAR_WS)
     return p.parse_args()
@@ -52,16 +52,14 @@ def parse_args():
 def main():
     args = parse_args()
 
-    if args.mode == "place" and args.place_z_descent is None:
-        print("[ERROR] --mode place 사용 시 --place_z_descent 가 필요합니다.")
-        sys.exit(1)
+    mode = "place" if args.place else "grasp"
 
     summary_host  = str(Path(args.summary_json).resolve())
     executor_ctr  = to_container_path(str(SCRIPTS / "robot_executor.py"))
     summary_ctr   = to_container_path(summary_host)
     kistar_ws_ctr = to_container_path(args.kistar_ws)
 
-    print(f"[send_to_robot] Docker exec → {args.container}  mode={args.mode}")
+    print(f"[send_to_robot] Docker exec → {args.container}  mode={mode}")
     print(f"  summary (host): {summary_host}")
     print(f"  summary (ctr) : {summary_ctr}")
 
@@ -70,13 +68,15 @@ def main():
         sys.exit(1)
 
     extra = (
-        f"--mode {args.mode} "
+        f"--mode {mode} "
         f"--execute_mode {args.execute_mode} "
         f"--speed_factor {args.speed_factor} "
         f"--approach_offset {args.approach_offset}"
     )
-    if args.mode == "place":
-        extra += f" --place_z_descent {args.place_z_descent}"
+    if args.place:
+        extra += f" --place_z_descent {PLACE_Z_DESCENT_M}"
+    if args.disable_collision:
+        extra += " --disable_collision"
 
     ensure_running(args.container)
     stop_event, thread, _ = ask_and_record()

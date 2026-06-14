@@ -49,6 +49,8 @@ def parse_args():
     p.add_argument('--approach_offset', type=float, default=0.10)
     p.add_argument('--place_z_descent', type=float, default=None,
                    help='[place mode] HOME EE Z 에서 내려갈 거리 (m). 양수 = 아래 방향.')
+    p.add_argument('--disable_collision', action='store_true',
+                   help='MoveIt collision 검사 비활성화 (base 이동 후 scene 재설정 전 임시 사용)')
     return p.parse_args()
 
 
@@ -71,6 +73,7 @@ def main():
             args.speed_factor,
             args.approach_offset,
             summary_json_path=args.summary_json,
+            disable_collision=args.disable_collision,
         )
     else:
         node = PlaceExecutor(
@@ -80,6 +83,7 @@ def main():
             args.approach_offset,
             place_z_descent=args.place_z_descent,
             summary_json_path=args.summary_json,
+            disable_collision=args.disable_collision,
         )
 
     executor = MultiThreadedExecutor()

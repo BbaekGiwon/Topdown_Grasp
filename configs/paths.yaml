@@ -3,7 +3,7 @@
 
 # ── Conda 환경 ──────────────────────────────────────────────────────────────
 __CONDA_BASE__: /home/kist/miniforge3
-__CONDA_ENV__:  grasp_fruit
+__CONDA_ENV__:  pipeline_all
 
 # ── ROS2 / Docker ───────────────────────────────────────────────────────────
 __DOCKER_CONTAINER__: ros2_humble

@@ -21,6 +21,7 @@ ROOT    = SCRIPTS.parent
 
 sys.path.insert(0, str(SCRIPTS))
 from utils.paths import CONDA_BASE as DEFAULT_CONDA_BASE, CONDA_ENV as DEFAULT_ENV, KISTAR_WS as DEFAULT_KISTAR_WS
+from utils.arm import APPROACH_OFFSET_M as DEFAULT_APPROACH_OFFSET, PLACE_Z_DESCENT_M as DEFAULT_PLACE_Z_DESCENT
 
 # configs/camera/realsense.yaml
 _rs_cfg = yaml.safe_load((ROOT / "configs" / "camera" / "realsense.yaml").read_text())
@@ -111,10 +112,13 @@ def add_robot_args(p) -> None:
     rob.add_argument("--execute_mode",    default="direct_franka_topic",
                      choices=["trajectory_forwarder", "direct_franka_topic"])
     rob.add_argument("--speed_factor",    type=float, default=0.1)
-    rob.add_argument("--approach_offset", type=float, default=0.10)
-    rob.add_argument("--place_z_descent", type=float, default=None,
-                     help="HOME EE Z 에서 하강 거리 (m). 지정 시 place 모드.")
+    rob.add_argument("--approach_offset", type=float, default=DEFAULT_APPROACH_OFFSET)
+    rob.add_argument("--place", action="store_true",
+                     help=f"pick+place 모드 활성화. 하강 거리는 configs/arm.yaml "
+                          f"place_z_descent_m={DEFAULT_PLACE_Z_DESCENT} m 사용")
     rob.add_argument("--kistar_ws", default=DEFAULT_KISTAR_WS)
+    rob.add_argument("--disable_collision", action="store_true",
+                     help="MoveIt collision 검사 비활성화 (base 이동 후 임시 테스트용)")
 
 
 # ---------------------------------------------------------------------------
@@ -217,19 +221,20 @@ def stage_grasp(python: Path, args, input_path: Path,
 def stage_robot(python: Path, args, grasp_json: Path,
                 label: str = '', on_error: str = 'exit') -> bool:
     """로봇 실행 (Docker exec → send_to_robot.py --mode grasp|place)."""
-    place_z = getattr(args, 'place_z_descent', None)
-    mode    = 'place' if place_z is not None else 'grasp'
+    use_place = getattr(args, 'place', False)
+    mode      = 'place' if use_place else 'grasp'
 
     robot_args = [
         "--summary_json",    str(grasp_json),
-        "--mode",            mode,
         "--execute_mode",    args.execute_mode,
         "--speed_factor",    str(args.speed_factor),
         "--approach_offset", str(args.approach_offset),
         "--kistar_ws",       args.kistar_ws,
     ]
-    if place_z is not None:
-        robot_args += ["--place_z_descent", str(place_z)]
+    if use_place:
+        robot_args += ["--place"]
+    if getattr(args, 'disable_collision', False):
+        robot_args += ["--disable_collision"]
 
     name = f"Robot ({mode.capitalize()})" + (f" {label}" if label else "")
     return run_stage(python, SCRIPTS / "send_to_robot.py",

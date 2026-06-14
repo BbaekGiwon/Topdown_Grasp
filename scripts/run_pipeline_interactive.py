@@ -19,7 +19,7 @@ Usage:
 
     python scripts/run_pipeline_interactive.py \\
         --calibration configs/calibration/extrinsic_20260612_170053.json \\
-        --execute_robot --place_z_descent 0.15
+        --execute_robot --place
 """
 
 import argparse
