@@ -15,10 +15,10 @@ Usage:
     cd HARILAB/Grasp_fruit
 
     python scripts/run_pipeline_interactive.py \\
-        --calibration configs/calibration/PRIME_FR3_extrinsic_result_0313.json
+        --calibration configs/calibration/extrinsic_20260612_170053.json
 
     python scripts/run_pipeline_interactive.py \\
-        --calibration configs/calibration/PRIME_FR3_extrinsic_result_0313.json \\
+        --calibration configs/calibration/extrinsic_20260612_170053.json \\
         --execute_robot --place_z_descent 0.15
 """
 

@@ -9,7 +9,7 @@ from scipy.spatial.transform import Rotation as R
 
 
 DEFAULT_VITRA_CALIBRATION_RESULT_PATH = Path(
-    "/home/kist/HARILAB/VITRA/scripts/PRIME_FR3_extrinsic_result_0318.json"
+    "/home/kist/HARILAB/Grasp_fruit/configs/calibration/extrinsic_20260612_170053.json"
 )
 
 

@@ -98,7 +98,7 @@ def _exec(node, jt: JointTrajectory, post_delay: float = 0.0) -> float:
 def _plan(node, goal, label: str, seed=None,
           confirm: bool = True) -> JointTrajectory | None:
     """_plan_step 래퍼. seed 가 있으면 jvals 로 전달."""
-    from robot_executor import HOME_JOINT_NAMES
+    from utils.arm import HOME_JOINT_NAMES
     jnames = HOME_JOINT_NAMES if seed is not None else None
     return node._plan_step(goal, label,
                            jnames=jnames, jvals=seed,
@@ -184,7 +184,7 @@ def step_go_home(node, confirm: bool = False,
     """HOME 관절값으로 이동.
     approach_traj가 있으면 역재생 (100% 성공), 없으면 OMPL/direct fallback.
     """
-    from robot_executor import HOME_JOINT_NAMES, HOME_JOINT_VALUES
+    from utils.arm import HOME_JOINT_NAMES, HOME_JOINT_VALUES
 
     if approach_traj is not None:
         node.get_logger().info('[HOME] approach 역재생으로 복귀 (IK 재계산 없음)')
@@ -278,7 +278,7 @@ def step_place_from_home(node, place_z_descent: float) -> bool:
 
     Returns: True 성공, False 실패
     """
-    from robot_executor import HOME_JOINT_VALUES
+    from utils.arm import HOME_JOINT_VALUES
 
     node.get_logger().info('[step_place_from_home] FK로 HOME EE 위치 계산 중...')
     home_ee = node._compute_fk(list(HOME_JOINT_VALUES))

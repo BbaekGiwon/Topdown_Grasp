@@ -6,20 +6,20 @@ Grasp_fruit pipeline: (RealSense 캡처 또는 파일 입력) → SAM3 → Top-d
     python scripts/run_pipeline.py \\
         --input data/raw/scene.npz \\
         --query "apple" \\
-        --calibration configs/calibration/PRIME_FR3_extrinsic_result_0313.json
+        --calibration configs/calibration/extrinsic_20260612_170053.json
 
 [카메라 캡처 + 로봇]
     python scripts/run_pipeline.py \\
         --capture \\
         --query "apple" \\
-        --calibration configs/calibration/PRIME_FR3_extrinsic_result_0313.json \\
+        --calibration configs/calibration/extrinsic_20260612_170053.json \\
         --execute_robot
 
 [카메라 캡처 + Place]
     python scripts/run_pipeline.py \\
         --capture \\
         --query "apple" \\
-        --calibration configs/calibration/PRIME_FR3_extrinsic_result_0313.json \\
+        --calibration configs/calibration/extrinsic_20260612_170053.json \\
         --execute_robot --place_z_descent 0.15
 """
 
