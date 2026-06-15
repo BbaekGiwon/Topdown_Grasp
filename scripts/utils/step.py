@@ -280,6 +280,10 @@ def step_place_from_home(node, place_z_descent: float) -> bool:
     """
     from utils.arm import HOME_JOINT_VALUES
 
+    # step_go_home 직후 속도 감속 여유 (trajectory duration 기반 wait는
+    # _exec 내부에서 이미 처리됨 — 여기서는 settling만 보장)
+    time.sleep(0.5)
+
     node.get_logger().info('[step_place_from_home] FK로 HOME EE 위치 계산 중...')
     home_ee = node._compute_fk(list(HOME_JOINT_VALUES))
     if home_ee is None:
@@ -295,8 +299,10 @@ def step_place_from_home(node, place_z_descent: float) -> bool:
 
     place_target = node._make_pose(x, y, place_z, qx, qy, qz, qw)
 
-    # 하강: Cartesian 계획 (1회)
-    descent_jt = _plan(node, place_target, 'PLACE_DESCENT', confirm=False)
+    # HOME_JOINT_VALUES를 seed로 고정 — _current_joints 타이밍 오차로
+    # Cartesian 시작점이 틀어지는 것을 방지
+    descent_jt = _plan(node, place_target, 'PLACE_DESCENT',
+                       seed=list(HOME_JOINT_VALUES), confirm=False)
     if descent_jt is None:
         node.get_logger().error('[step_place_from_home] PLACE_DESCENT 실패')
         return False
