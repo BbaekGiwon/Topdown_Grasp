@@ -21,7 +21,11 @@ ROOT    = SCRIPTS.parent
 
 sys.path.insert(0, str(SCRIPTS))
 from utils.paths import CONDA_BASE as DEFAULT_CONDA_BASE, CONDA_ENV as DEFAULT_ENV, KISTAR_WS as DEFAULT_KISTAR_WS
-from utils.arm import APPROACH_OFFSET_M as DEFAULT_APPROACH_OFFSET, PLACE_Z_DESCENT_M as DEFAULT_PLACE_Z_DESCENT
+from utils.arm import (
+    APPROACH_OFFSET_M as DEFAULT_APPROACH_OFFSET,
+    PLACE_Z_DESCENT_M as DEFAULT_PLACE_Z_DESCENT,
+    GRASP_Z_OFFSET_M  as DEFAULT_GRASP_Z_OFFSET,
+)
 
 # configs/camera/realsense.yaml
 _rs_cfg = yaml.safe_load((ROOT / "configs" / "camera" / "realsense.yaml").read_text())
@@ -91,7 +95,7 @@ def add_sam3_args(p) -> None:
     p.add_argument("--sam3_mask_threshold", type=float, default=0.5)
 
 
-def add_grasp_args(p, z_offset: float = 0.14) -> None:
+def add_grasp_args(p, z_offset: float = DEFAULT_GRASP_Z_OFFSET) -> None:
     gsp = p.add_argument_group("Grasp")
     gsp.add_argument("--depth_scale", type=float, default=1.0)
     gsp.add_argument("--z_offset",    type=float, default=z_offset)

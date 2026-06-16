@@ -53,7 +53,7 @@ from utils.hand import (
 
 # 팔 설정 — configs/arm.yaml 에서 관리 (utils/arm.py 로드)
 from utils.arm import (
-    APPROACH_OFFSET_M,
+    APPROACH_OFFSET_M, GRASP_Z_OFFSET_M,
     EE_YAW_DEG, EE_X_OFFSET_M, EE_Y_OFFSET_M,
     TOP_Z_PCT, Z_TOP_PCT,
 )
@@ -276,8 +276,8 @@ def parse_args():
     p.add_argument("--calibration", default=None,
                    help="Calibration JSON with T_base_camera (4x4). "
                         f"Default: {DEFAULT_VITRA_CALIBRATION_RESULT_PATH}")
-    p.add_argument("--z_offset", type=float, default=0.31,
-                   help="Z above object top in world frame, metres (default: 0.31)")
+    p.add_argument("--z_offset", type=float, default=GRASP_Z_OFFSET_M,
+                   help=f"Z above object top in world frame, metres (default: arm.yaml grasp_z_offset_m={GRASP_Z_OFFSET_M})")
     p.add_argument("--depth_scale", type=float, default=1.0,
                    help="Depth divisor to convert raw values to metres (default: 1.0)")
     p.add_argument("--hand_pose", default=None,

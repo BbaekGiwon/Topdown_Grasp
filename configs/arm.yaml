@@ -66,15 +66,16 @@ home:
     - 1.9485
     - 1.1640
 
-# ── Approach / Place 오프셋 ────────────────────────────────────────────────────
+# ── Approach / Place / Grasp 오프셋 ───────────────────────────────────────────
 approach_offset_m: 0.10    # 물체 위에서 approach 시작 높이 (m)
-place_z_descent_m: 0.15    # HOME EE Z 에서 place 하강 거리 (m)
+place_z_descent_m: 0.15    # HOME EE Z 에서 place 하강 거리 (m, world Z 기준)
+grasp_z_offset_m:  0.13    # SAM3 검출 z_top 위에서 실제 파지 목표까지 오프셋 (m, world Z 기준)
 
 # ── EE 자세 보정 (캘리브레이션 오프셋) ─────────────────────────────────────────
 ee_correction:
   yaw_deg: -45.0            # 핸드 장착 회전 오프셋 (world Z축 기준, degrees)
   x_offset_m:  0.01         # EE XY 위치 보정 X (world 프레임, m)
-  y_offset_m: -0.02         # EE XY 위치 보정 Y (world 프레임, m)
+  y_offset_m: -0.01         # EE XY 위치 보정 Y (world 프레임, m)
 
 # ── 포인트 클라우드 처리 파라미터 ──────────────────────────────────────────────
 pointcloud:

@@ -87,7 +87,7 @@ def main():
     stop_recording(stop_event, thread)
 
     if rc == 0:
-        print(f"\n[send_to_robot] {args.mode} 완료.")
+        print(f"\n[send_to_robot] {mode} 완료.")
     else:
         print(f"\n[send_to_robot] 종료 코드: {rc}")
     sys.exit(rc)

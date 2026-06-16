@@ -20,7 +20,7 @@ Grasp_fruit pipeline: (RealSense 캡처 또는 파일 입력) → SAM3 → Top-d
         --capture \\
         --query "apple" \\
         --calibration configs/calibration/extrinsic_20260612_170053.json \\
-        --execute_robot --place_z_descent 0.15
+        --execute_robot --place
 """
 
 import argparse

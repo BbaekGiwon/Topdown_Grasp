@@ -279,6 +279,7 @@ def step_place_from_home(node, place_z_descent: float) -> bool:
     Returns: True 성공, False 실패
     """
     from utils.arm import HOME_JOINT_VALUES
+    from utils.grasp import base_to_world, world_to_base
 
     # step_go_home 직후 속도 감속 여유 (trajectory duration 기반 wait는
     # _exec 내부에서 이미 처리됨 — 여기서는 settling만 보장)
@@ -290,14 +291,25 @@ def step_place_from_home(node, place_z_descent: float) -> bool:
         node.get_logger().error('[step_place_from_home] FK 실패')
         return False
 
-    x, y, home_z   = home_ee[0], home_ee[1], home_ee[2]
-    qx, qy, qz, qw = home_ee[3], home_ee[4], home_ee[5], home_ee[6]
-    place_z = home_z - place_z_descent
-    node.get_logger().info(
-        f'[step_place_from_home] HOME Z={home_z:.3f}m  '
-        f'descent={place_z_descent:.3f}m  place_z={place_z:.3f}m')
+    xyz_b  = home_ee[:3]
+    quat_b = home_ee[3:]  # [qx, qy, qz, qw]
 
-    place_target = node._make_pose(x, y, place_z, qx, qy, qz, qw)
+    T_wb = node._summary.get('T_world_base')
+    if T_wb is not None:
+        # base 프레임 FK 결과를 world 프레임으로 변환 → world Z로 하강 → base 역변환
+        xyz_w, quat_w = base_to_world(T_wb, xyz_b, quat_b)
+        place_xyz_w   = [xyz_w[0], xyz_w[1], xyz_w[2] - place_z_descent]
+        place_xyz_b, place_quat_b = world_to_base(T_wb, place_xyz_w, quat_w)
+        node.get_logger().info(
+            f'[step_place_from_home] HOME (world) Z={xyz_w[2]:.3f}m  '
+            f'descent={place_z_descent:.3f}m  place Z={place_xyz_w[2]:.3f}m')
+    else:
+        # T_world_base 없으면 base Z로 하강 (fallback)
+        node.get_logger().warning('[step_place_from_home] T_world_base 없음 → base Z로 하강')
+        place_xyz_b  = [xyz_b[0], xyz_b[1], xyz_b[2] - place_z_descent]
+        place_quat_b = quat_b
+
+    place_target = node._make_pose(*place_xyz_b, *place_quat_b)
 
     # HOME_JOINT_VALUES를 seed로 고정 — _current_joints 타이밍 오차로
     # Cartesian 시작점이 틀어지는 것을 방지

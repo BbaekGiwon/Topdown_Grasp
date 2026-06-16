@@ -5,7 +5,7 @@
 내보내는 주요 상수:
   PLANNING_GROUP, EE_LINK, REF_FRAME, PLANNING_TIME
   HOME_JOINT_NAMES, HOME_JOINT_VALUES
-  APPROACH_OFFSET_M
+  APPROACH_OFFSET_M, PLACE_Z_DESCENT_M, GRASP_Z_OFFSET_M
   EE_YAW_DEG, EE_X_OFFSET_M, EE_Y_OFFSET_M
   TOP_Z_PCT, Z_TOP_PCT
 """
@@ -33,9 +33,10 @@ PLANNING_TIME:  float = float(_cfg["planning"]["planning_time_sec"])
 HOME_JOINT_NAMES:  list[str]   = list(_cfg["home"]["joint_names"])
 HOME_JOINT_VALUES: list[float] = list(_cfg["home"]["joint_values"])
 
-# ── Approach / Place 오프셋 ───────────────────────────────────────────────────
+# ── Approach / Place / Grasp 오프셋 ──────────────────────────────────────────
 APPROACH_OFFSET_M:   float = float(_cfg["approach_offset_m"])
 PLACE_Z_DESCENT_M:   float = float(_cfg["place_z_descent_m"])
+GRASP_Z_OFFSET_M:    float = float(_cfg["grasp_z_offset_m"])
 
 # ── EE 자세 보정 ──────────────────────────────────────────────────────────────
 EE_YAW_DEG:   float = float(_cfg["ee_correction"]["yaw_deg"])

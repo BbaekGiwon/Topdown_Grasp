@@ -101,6 +101,22 @@ def world_to_base(T_world_base_list, xyz_world, quat_world_xyzw):
     return p_b.tolist(), q_b
 
 
+def base_to_world(T_world_base_list, xyz_base, quat_base_xyzw):
+    """Transform EE pose from base frame to world frame.
+
+    T_world_base: 4x4 list (p_world = T @ p_base).
+    Returns (xyz_world, quat_world_xyzw).
+    """
+    T_wb = np.array(T_world_base_list, dtype=np.float64)
+    R_wb = T_wb[:3, :3]
+    t_wb = T_wb[:3, 3]
+    p_w  = R_wb @ np.array(xyz_base, dtype=np.float64) + t_wb
+    R_be = _quat_to_rotmat(quat_base_xyzw)
+    R_we = R_wb @ R_be
+    q_w  = _rotmat_to_quat(R_we)
+    return p_w.tolist(), q_w
+
+
 # ── Node ─────────────────────────────────────────────────────────────────────
 
 class GraspExecutor(Node):
