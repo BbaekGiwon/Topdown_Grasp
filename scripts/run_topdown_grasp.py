@@ -23,6 +23,8 @@ import math
 import sys
 from pathlib import Path
 
+import yaml
+
 import cv2
 import numpy as np
 from scipy.spatial import cKDTree
@@ -92,7 +94,10 @@ def statistical_outlier_removal(pts: np.ndarray, k: int = 20,
     return pts[mean_dists <= threshold]
 
 
-def build_topdown_pose(obj_pts_world: np.ndarray, z_offset: float) -> tuple:
+def build_topdown_pose(obj_pts_world: np.ndarray, z_offset: float,
+                       ee_yaw_deg: float = EE_YAW_DEG,
+                       ee_x_offset_m: float = EE_X_OFFSET_M,
+                       ee_y_offset_m: float = EE_Y_OFFSET_M) -> tuple:
     """Return (T_4x4, info_dict) for a top-down grasp in world frame.
 
     Improvements applied:
@@ -134,8 +139,8 @@ def build_topdown_pose(obj_pts_world: np.ndarray, z_offset: float) -> tuple:
     c2 = _wrap_pi(alpha_perp + math.pi)
     alpha_final = c1 if abs(c1) <= abs(c2) else c2
 
-    # EE_YAW_DEG(-45°) = 핸드 장착 오프셋; alpha_final = PCA 수직 보정
-    yaw = math.radians(EE_YAW_DEG) + alpha_final
+    # ee_yaw_deg(-45°) = 핸드 장착 오프셋; alpha_final = PCA 수직 보정
+    yaw = math.radians(ee_yaw_deg) + alpha_final
 
     c, s = math.cos(yaw), math.sin(yaw)
 
@@ -153,11 +158,11 @@ def build_topdown_pose(obj_pts_world: np.ndarray, z_offset: float) -> tuple:
         [0.0, 0.0, 1.0],
     ], dtype=np.float64)
 
-    # offset은 EE_YAW_DEG(-45°)만 적용 시 캘리브레이션된 값이므로,
+    # offset은 ee_yaw_deg(-45°)만 적용 시 캘리브레이션된 값이므로,
     # PCA 추가 회전(alpha_final)만큼 2D 회전해서 world XY로 변환
     cf, sf = math.cos(alpha_final), math.sin(alpha_final)
-    ox = EE_X_OFFSET_M * cf - EE_Y_OFFSET_M * sf
-    oy = EE_X_OFFSET_M * sf + EE_Y_OFFSET_M * cf
+    ox = ee_x_offset_m * cf - ee_y_offset_m * sf
+    oy = ee_x_offset_m * sf + ee_y_offset_m * cf
 
     T = np.eye(4, dtype=np.float64)
     T[:3, :3] = R_yaw @ R_down
@@ -273,6 +278,8 @@ def parse_args():
 
     p.add_argument("--mask",     required=True, help="Binary mask PNG (255=object)")
     p.add_argument("--output",   default=None,  help="Output directory (default: data/outputs/)")
+    p.add_argument("--query",    default=None,
+                   help="물체 이름 — fruits.yaml 오프셋 조회용 (optional)")
     p.add_argument("--calibration", default=None,
                    help="Calibration JSON with T_base_camera (4x4). "
                         f"Default: {DEFAULT_VITRA_CALIBRATION_RESULT_PATH}")
@@ -416,8 +423,31 @@ def main():
     pts_h = np.hstack([obj_pts_cam.astype(np.float64), ones])
     obj_pts_world = (T_world_camera @ pts_h.T).T[:, :3]
 
+    # --- Per-fruit offset override (configs/fruits.yaml) ---
+    ee_yaw_deg    = EE_YAW_DEG
+    ee_x_offset_m = EE_X_OFFSET_M
+    ee_y_offset_m = EE_Y_OFFSET_M
+    z_offset      = args.z_offset
+
+    fruits_path = ROOT / "configs" / "fruits.yaml"
+    if args.query and fruits_path.exists():
+        fruits_cfg = yaml.safe_load(fruits_path.read_text()) or {}
+        key        = args.query.strip().lower()
+        override   = fruits_cfg.get(key)
+        if override:
+            ee_yaw_deg    = float(override.get('yaw_deg',          ee_yaw_deg))
+            ee_x_offset_m = float(override.get('x_offset_m',       ee_x_offset_m))
+            ee_y_offset_m = float(override.get('y_offset_m',       ee_y_offset_m))
+            z_offset      = float(override.get('grasp_z_offset_m', z_offset))
+            print(f"[fruits.yaml] {key!r} → "
+                  f"yaw={ee_yaw_deg:.1f}°  x={ee_x_offset_m:.3f}m  "
+                  f"y={ee_y_offset_m:.3f}m  z_offset={z_offset:.3f}m")
+        else:
+            print(f"[fruits.yaml] {key!r} 항목 없음 → arm.yaml 기본값 사용")
+
     # --- Build top-down EE pose in world frame ---
-    T_world_ee, pose_info = build_topdown_pose(obj_pts_world, args.z_offset)
+    T_world_ee, pose_info = build_topdown_pose(
+        obj_pts_world, z_offset, ee_yaw_deg, ee_x_offset_m, ee_y_offset_m)
 
     print(f"Object centroid (world): x={pose_info['cx']:.3f}  y={pose_info['cy']:.3f}  "
           f"z_top({Z_TOP_PCT:.0f}pct)={pose_info['z_top']:.3f}")

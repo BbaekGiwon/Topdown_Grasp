@@ -181,6 +181,7 @@ def stage_sam3_only(python: Path, args, input_path: Path, output_dir: Path,
 
 def stage_grasp(python: Path, args, input_path: Path,
                 mask_path: Path, output_dir: Path,
+                query: str = None,
                 on_error: str = 'exit') -> 'Path | None':
     """Top-down grasp 계산 → summary JSON. 실패 시 None 또는 sys.exit."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -191,6 +192,9 @@ def stage_grasp(python: Path, args, input_path: Path,
         "--z_offset",    str(args.z_offset),
         "--output",      str(output_dir),
     ]
+    q = query or getattr(args, 'query', None)
+    if q:
+        stage_args += ["--query", q]
     if args.calibration:
         stage_args += ["--calibration", args.calibration]
     if getattr(args, 'hand_pose', None):

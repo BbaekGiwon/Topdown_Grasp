@@ -214,7 +214,7 @@ def main():
             # ── Stage 2: Grasp ─────────────────────────────────────────
             grasp_json = stage_grasp(
                 python, args, input_path, mask_path, outputs,
-                on_error='continue')
+                query=query, on_error='continue')
             if grasp_json is None:
                 continue
 
