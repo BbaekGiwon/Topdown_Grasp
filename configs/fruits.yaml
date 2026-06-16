@@ -11,3 +11,4 @@ pear:
   yaw_deg: -45.0
   x_offset_m:  0.01
   y_offset_m: -0.03
+  grasp_z_offset_m: 0.13
