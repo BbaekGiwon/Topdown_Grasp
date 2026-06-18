@@ -227,7 +227,8 @@ def stage_grasp(python: Path, args, input_path: Path,
 
 
 def stage_robot(python: Path, args, grasp_json: Path,
-                label: str = '', on_error: str = 'exit') -> bool:
+                label: str = '', on_error: str = 'exit',
+                no_record: bool = False) -> bool:
     """로봇 실행 (Docker exec → send_to_robot.py --mode grasp|place)."""
     use_place = getattr(args, 'place', False)
     mode      = 'place' if use_place else 'grasp'
@@ -243,6 +244,8 @@ def stage_robot(python: Path, args, grasp_json: Path,
         robot_args += ["--place"]
     if getattr(args, 'disable_collision', False):
         robot_args += ["--disable_collision"]
+    if no_record:
+        robot_args += ["--no_record"]
 
     name = f"Robot ({mode.capitalize()})" + (f" {label}" if label else "")
     return run_stage(python, SCRIPTS / "send_to_robot.py",

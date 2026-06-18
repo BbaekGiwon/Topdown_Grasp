@@ -73,8 +73,17 @@ rs = _import_pyrealsense2()
 
 
 def make_depth_vis(depth_raw):
-    depth_vis = cv2.convertScaleAbs(depth_raw, alpha=0.03)
-    return cv2.applyColorMap(depth_vis, cv2.COLORMAP_JET)
+    valid = depth_raw[depth_raw > 0]
+    if valid.size == 0:
+        return cv2.applyColorMap(np.zeros_like(depth_raw, dtype=np.uint8),
+                                 cv2.COLORMAP_TURBO)
+    lo, hi = int(valid.min()), int(valid.max())
+    if hi == lo:
+        hi = lo + 1
+    norm = np.clip(depth_raw.astype(np.float32), lo, hi)
+    norm = ((norm - lo) / (hi - lo) * 255).astype(np.uint8)
+    norm[depth_raw == 0] = 0
+    return cv2.applyColorMap(norm, cv2.COLORMAP_TURBO)
 
 
 def make_capture_path(output_dir, stem, capture_idx, suffix=".npz"):
@@ -256,3 +265,101 @@ def capture_realsense_once(
     finally:
         pipeline.stop()
         print("[INFO] RealSense stopped")
+
+
+class RealSenseSession:
+    """파이프라인을 세션 내내 열어두고 grab만 반복하는 컨텍스트 매니저.
+
+    AE/AWB 수렴을 최초 1회만 기다리므로 반복 캡처 시 이미지가 일관됨.
+
+    Usage:
+        with RealSenseSession(warmup_frames=60) as cam:
+            path = cam.capture(output_dir, stem, capture_idx)
+    """
+
+    def __init__(self, width=640, height=480, fps=30, warmup_frames=60,
+                 video_path=None):
+        self.width         = width
+        self.height        = height
+        self.fps           = fps
+        self.warmup_frames = warmup_frames
+        self._video_path   = Path(video_path) if video_path else None
+        self._pipeline     = None
+        self._align        = None
+        self._depth_scale  = None
+        self._K            = None
+        self._writer       = None
+
+    def __enter__(self):
+        self._pipeline = rs.pipeline()
+        config = rs.config()
+        config.enable_stream(rs.stream.color, self.width, self.height,
+                             rs.format.bgr8, self.fps)
+        config.enable_stream(rs.stream.depth, self.width, self.height,
+                             rs.format.z16, self.fps)
+
+        profile         = self._pipeline.start(config)
+        self._align     = rs.align(rs.stream.color)
+        depth_sensor    = profile.get_device().first_depth_sensor()
+        self._depth_scale = depth_sensor.get_depth_scale()
+
+        print(f"[RealSense] 파이프라인 시작 — warmup {self.warmup_frames}프레임 대기 중...")
+        for _ in range(self.warmup_frames):
+            self._pipeline.wait_for_frames()
+        print("[RealSense] warmup 완료.")
+
+        # K는 첫 프레임에서 읽음
+        frames      = self._pipeline.wait_for_frames()
+        frames      = self._align.process(frames)
+        color_frame = frames.get_color_frame()
+        intr        = color_frame.profile.as_video_stream_profile().get_intrinsics()
+        self._K = np.array([
+            [intr.fx, 0.0, intr.ppx],
+            [0.0, intr.fy, intr.ppy],
+            [0.0, 0.0, 1.0],
+        ], dtype=np.float32)
+
+        if self._video_path:
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            self._writer = cv2.VideoWriter(
+                str(self._video_path), fourcc, float(self.fps),
+                (self.width, self.height))
+            if self._writer.isOpened():
+                print(f"[RealSense] 비디오 녹화 시작: {self._video_path}")
+            else:
+                print(f"[RealSense] WARNING: VideoWriter 열기 실패 → 녹화 건너뜀")
+                self._writer = None
+
+        return self
+
+    def capture(self, output_dir, stem, capture_idx=0,
+                suffix=".npz", save_rgb_png=True, save_depth_png=True):
+        """현재 프레임을 저장하고 output_path를 반환."""
+        frames      = self._pipeline.wait_for_frames()
+        frames      = self._align.process(frames)
+        color_frame = frames.get_color_frame()
+        depth_frame = frames.get_depth_frame()
+        if not color_frame or not depth_frame:
+            raise RuntimeError("RealSense: 프레임 수신 실패")
+
+        rgb_bgr   = np.asanyarray(color_frame.get_data())
+        depth_raw = np.asanyarray(depth_frame.get_data())
+        depth_m   = depth_raw.astype(np.float32) * self._depth_scale
+
+        if self._writer:
+            self._writer.write(rgb_bgr)
+
+        output_path = make_capture_path(output_dir, stem, capture_idx, suffix=suffix)
+        save_capture_bundle(output_path, rgb_bgr, depth_raw, depth_m, self._K,
+                            save_rgb_png=save_rgb_png,
+                            save_depth_png=save_depth_png)
+        print(f"[RealSense] 캡처 저장: {output_path}")
+        return output_path
+
+    def __exit__(self, *_):
+        if self._writer:
+            self._writer.release()
+            print(f"[RealSense] 비디오 저장 완료: {self._video_path}")
+        if self._pipeline:
+            self._pipeline.stop()
+            print("[RealSense] 파이프라인 종료.")

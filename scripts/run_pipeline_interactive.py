@@ -29,11 +29,16 @@ import cv2
 import numpy as np
 from pathlib import Path
 
+SCRIPTS = Path(__file__).resolve().parent
+ROOT    = SCRIPTS.parent
+import sys; sys.path.insert(0, str(ROOT / "src"))
+from affordance_grasp.io.realsense import RealSenseSession
+
 from pipeline_core import (
     ROOT,
     python_bin,
     add_conda_args, add_camera_args, add_sam3_args, add_grasp_args, add_robot_args,
-    stage_capture, stage_grasp, stage_robot,
+    stage_grasp, stage_robot,
 )
 
 
@@ -135,94 +140,106 @@ def main():
     sam3 = Sam3Session(
         args.sam3_model_id, args.sam3_threshold, args.sam3_mask_threshold)
 
-    capture_idx   = 0
-    first_capture = True
+    capture_idx = 0
 
     print("\n" + "="*60)
     print("  Interactive Pipeline 준비 완료")
     print("  'exit' / 'quit' / 'q' 입력 시 종료")
     print("="*60)
 
+    # 비디오 녹화 여부 (세션 시작 전 1회 질문)
+    video_path = None
     try:
-        while True:
-            print()
-            try:
-                query = input("  Query> ").strip()
-            except (EOFError, KeyboardInterrupt):
-                print("\n[Interactive] 종료.")
-                break
+        ans = input("\n  비디오 녹화 하시겠습니까? (yes/no) > ").strip().lower()
+        if ans in ("yes", "y"):
+            video_path = outputs / "interactive_session.mp4"
+            print(f"  [녹화] {video_path}")
+    except (EOFError, KeyboardInterrupt):
+        pass
 
-            if query.lower() in ("exit", "quit", "q"):
-                print("[Interactive] 종료.")
-                break
-            if not query:
-                continue
+    cam_session = RealSenseSession(
+        width=args.camera_width,
+        height=args.camera_height,
+        fps=args.camera_fps,
+        warmup_frames=args.warmup_frames,
+        video_path=video_path,
+    )
 
-            stem = f"interactive_{capture_idx:03d}"
-            capture_idx += 1
+    try:
+        with cam_session as cam:
+            while True:
+                print()
+                try:
+                    query = input("  Query> ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    print("\n[Interactive] 종료.")
+                    break
 
-            # 첫 캡처는 워밍업 30프레임, 이후 5프레임
-            warmup        = args.warmup_frames if first_capture else 5
-            first_capture = False
+                if query.lower() in ("exit", "quit", "q"):
+                    print("[Interactive] 종료.")
+                    break
+                if not query:
+                    continue
 
-            # ── Stage 0: 캡처 ──────────────────────────────────────────
-            input_path = stage_capture(
-                python, args, stem, raw_dir,
-                warmup_frames=warmup, on_error='continue')
-            if input_path is None:
-                continue
+                stem = f"interactive_{capture_idx:03d}"
+                capture_idx += 1
 
-            # ── Stage 1: SAM3 (in-process) ─────────────────────────────
-            npz = np.load(str(input_path))
-            rgb = npz["rgb"]
-            if rgb.dtype != np.uint8:
-                rgb = (rgb * 255).clip(0, 255).astype(np.uint8)
-            image_rgb = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB)
+                # ── Stage 0: 캡처 (파이프라인 유지 — AE/AWB 재수렴 없음) ──
+                raw_dir.mkdir(parents=True, exist_ok=True)
+                input_path = cam.capture(raw_dir, stem, capture_idx - 1)
 
-            result = sam3.segment(image_rgb, query)
-            if result is None or not result["mask"].any():
-                print("  [WARN] 마스크 없음 — 다음 query를 입력하세요.")
-                continue
+                # ── Stage 1: SAM3 (in-process) ─────────────────────────
+                npz = np.load(str(input_path))
+                rgb = npz["rgb"]
+                if rgb.dtype != np.uint8:
+                    rgb = (rgb * 255).clip(0, 255).astype(np.uint8)
+                image_rgb = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB)
 
-            # 마스크/overlay 저장
-            input_stem   = input_path.stem
-            mask_path    = interim / f"{input_stem}_mask.png"
-            overlay_path = interim / f"{input_stem}_overlay.png"
+                result = sam3.segment(image_rgb, query)
+                if result is None or not result["mask"].any():
+                    print("  [WARN] 마스크 없음 — 다음 query를 입력하세요.")
+                    continue
 
-            cv2.imwrite(str(mask_path),
-                        (result["mask"].astype(np.uint8) * 255))
-            canvas = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
-            ov     = canvas.copy()
-            ov[result["mask"]] = (0, 0, 220)
-            cv2.imwrite(str(overlay_path),
-                        cv2.addWeighted(ov, 0.45, canvas, 0.55, 0.0))
+                # 마스크/overlay 저장
+                input_stem   = input_path.stem
+                mask_path    = interim / f"{input_stem}_mask.png"
+                overlay_path = interim / f"{input_stem}_overlay.png"
 
-            sam3_json = interim / f"{input_stem}_sam3.json"
-            with open(sam3_json, "w") as f:
-                json.dump({
-                    "stem":  input_stem,
-                    "query": query,
-                    "sam3":  {
-                        "model":       args.sam3_model_id,
-                        "used_query":  query,
-                        "score":       result["score"],
-                        "box_xyxy":    result["box_xyxy"],
-                        "mask_pixels": int(result["mask"].sum()),
-                    },
-                }, f, indent=2, ensure_ascii=False)
+                cv2.imwrite(str(mask_path),
+                            (result["mask"].astype(np.uint8) * 255))
+                canvas = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
+                ov     = canvas.copy()
+                ov[result["mask"]] = (0, 0, 220)
+                cv2.imwrite(str(overlay_path),
+                            cv2.addWeighted(ov, 0.45, canvas, 0.55, 0.0))
 
-            # ── Stage 2: Grasp ─────────────────────────────────────────
-            grasp_json = stage_grasp(
-                python, args, input_path, mask_path, outputs,
-                query=query, on_error='continue')
-            if grasp_json is None:
-                continue
+                sam3_json = interim / f"{input_stem}_sam3.json"
+                with open(sam3_json, "w") as f:
+                    json.dump({
+                        "stem":  input_stem,
+                        "query": query,
+                        "sam3":  {
+                            "model":       args.sam3_model_id,
+                            "used_query":  query,
+                            "score":       result["score"],
+                            "box_xyxy":    result["box_xyxy"],
+                            "mask_pixels": int(result["mask"].sum()),
+                        },
+                    }, f, indent=2, ensure_ascii=False)
 
-            # ── Stage 3: Robot (선택) ──────────────────────────────────
-            if args.execute_robot:
-                stage_robot(python, args, grasp_json, on_error='continue')
+                # ── Stage 2: Grasp ─────────────────────────────────────────
+                grasp_json = stage_grasp(
+                    python, args, input_path, mask_path, outputs,
+                    query=query, on_error='continue')
+                if grasp_json is None:
+                    continue
 
-            print(f"  ✓ 완료: query={query!r}  →  {grasp_json.name}")
+                # ── Stage 3: Robot (선택) ──────────────────────────────────
+                if args.execute_robot:
+                    stage_robot(python, args, grasp_json, on_error='continue',
+                                no_record=(video_path is not None))
+
+                print(f"  ✓ 완료: query={query!r}  →  {grasp_json.name}")
 
     finally:
         sam3.close()

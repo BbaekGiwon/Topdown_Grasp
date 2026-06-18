@@ -46,6 +46,8 @@ def parse_args():
                    help="MoveIt collision 검사 비활성화 (base 이동 후 임시 테스트용)")
     p.add_argument("--container",  default=DOCKER_CONTAINER)
     p.add_argument("--kistar_ws",  default=DEFAULT_KISTAR_WS)
+    p.add_argument("--no_record",  action="store_true",
+                   help="녹화 여부 묻지 않고 건너뜀 (세션 녹화 중일 때 pipeline이 설정)")
     return p.parse_args()
 
 
@@ -79,7 +81,10 @@ def main():
         extra += " --disable_collision"
 
     ensure_running(args.container)
-    stop_event, thread, _ = ask_and_record()
+    if args.no_record:
+        stop_event, thread = None, None
+    else:
+        stop_event, thread, _ = ask_and_record()
 
     bash_cmd = ros_exec_cmd(executor_ctr, summary_ctr, kistar_ws_ctr,
                             extra_args=extra)
