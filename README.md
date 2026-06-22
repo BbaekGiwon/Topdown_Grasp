@@ -1,43 +1,51 @@
 # Grasp_fruit
 
-KISTAR Franka FR3 + KISTAR Hand를 이용한 과일 파지/배치 시스템.  
-RealSense 카메라로 RGB-D를 촬영하고, SAM3 텍스트 프롬프트 세그멘테이션으로 대상 물체를 검출한 뒤,  
-Top-down Grasp로 파지 위치를 계산하여 로봇이 자동으로 집어 내려놓는다.
+A fruit grasping and placing system using the KISTAR Franka FR3 + KISTAR Dexterous Hand.  
+Captures RGB-D with a RealSense camera, detects the target object via SAM3 text-prompted segmentation,  
+computes a top-down grasp pose, and executes the full pick-and-place autonomously.
+
+Designed to work together with  
+- [Franka_KISTAR_R_Exp_GWB](https://github.com/KIST-HARILAB/Franka_KISTAR_R_Exp_GWB)
+- [Dex_ROS_GWB](https://github.com/KIST-HARILAB/Dex_ROS_GWB)
+
+Made by **[Giwon Baek](https://github.com/BbaekGiwon)** (HARI LAB), 2026.06 
+
+![Framework](assets/framework.png)
 
 ---
 
-## 시스템 구성
+## System Overview
 
-| 구성 요소 | 내용 |
+| Component | Details |
 |---|---|
-| 로봇 | KISTAR Franka FR3 + KISTAR Dexterous Hand |
-| 카메라 | Intel RealSense D-series (RGB-D) |
-| 소프트웨어 스택 | ROS2 Humble / MoveIt2 (Docker `ros2_humble`) |
-| 파이프라인 환경 | Conda `pipeline_all` (Python 3.12, CUDA 12.8) |
-| 비전 모델 | SAM3 (text-prompted instance segmentation) |
-| Grasp 알고리즘 | Top-down grasp — PCA 기반 방향 추정 + 포인트클라우드 높이 |
+| Robot | KISTAR Franka FR3 + KISTAR Dexterous Hand |
+| Camera | Intel RealSense D-series (RGB-D) |
+| Software Stack | ROS2 Humble / MoveIt2 (Docker `ros2_humble`) |
+| Pipeline Environment | Conda `pipeline_all` (Python 3.12, CUDA 12.8) |
+| Vision Model | SAM3 (text-prompted instance segmentation) |
+| Grasp Algorithm | Top-down grasp — PCA-based orientation + point cloud height |
 
 ---
 
-## 설치
+## Installation
 
-### 1. Conda 환경 구성
+### 1. Conda Environment
 
 ```bash
 cd HARILAB/Grasp_fruit
-bash setup_pipeline_all.sh        # 환경 생성 + PyTorch(CUDA 12.8) + 패키지 설치
+bash setup_pipeline_all.sh        # create env + install PyTorch (CUDA 12.8) + packages
 conda activate pipeline_all
 ```
 
-이미 환경이 있다면:
+If the environment already exists:
 
 ```bash
 bash setup_pipeline_all.sh --skip-conda
 ```
 
-### 2. Docker 컨테이너 확인
+### 2. Docker Container
 
-ROS2 Humble + MoveIt2가 포함된 `ros2_humble` 컨테이너가 실행 중이어야 한다.
+The `ros2_humble` container (ROS2 Humble + MoveIt2) must be running before executing Stage 3.
 
 ```bash
 docker ps | grep ros2_humble
@@ -45,11 +53,11 @@ docker ps | grep ros2_humble
 
 ---
 
-## 설정 파일
+## Configuration Files
 
-### `configs/paths.yaml` — 머신별 경로 설정
+### `configs/paths.yaml` — Machine-specific paths
 
-다른 PC에 클론할 경우 **이 파일만** 수정하면 된다.
+When cloning on a different machine, **only this file** needs to be updated.
 
 ```yaml
 __CONDA_BASE__: /home/kist/miniforge3
@@ -62,26 +70,26 @@ __MOUNT_MAP__:
   - ["/home/kist/ros2_ws",  "/root/ros2_ws"]
 ```
 
-### `configs/arm.yaml` — 로봇 팔 파라미터
+### `configs/arm.yaml` — Robot arm parameters
 
-| 파라미터 | 설명 |
+| Parameter | Description |
 |---|---|
-| `home.joint_values` | HOME 자세 관절값 (rad) |
-| `approach_offset_m` | 파지 위치 위 approach 시작 높이 (m) |
-| `place_z_descent_m` | Place 시 HOME EE에서 world Z 기준 하강 거리 (m) |
-| `grasp_z_offset_m` | SAM3 검출 z_top 위 실제 파지 목표까지 오프셋 (m, world Z) |
-| `ee_correction.yaw_deg` | 핸드 장착 회전 오프셋 (°, world Z 기준) |
-| `ee_correction.x_offset_m` / `y_offset_m` | EE 위치 보정 (m, EE 좌표계 기준 — yaw 회전 후 적용) |
-| `pointcloud.top_z_pct` | 중심 계산에 사용할 상위 Z% 포인트 비율 |
-| `pointcloud.z_top_pct` | z_top 계산 percentile (노이즈 제거) |
+| `home.joint_values` | HOME pose joint values (rad) |
+| `approach_offset_m` | Approach start height above the object (m) |
+| `place_z_descent_m` | Descent distance from HOME EE along world Z during place (m) |
+| `grasp_z_offset_m` | Offset above SAM3 z_top to the actual grasp target (m, world Z) |
+| `ee_correction.yaw_deg` | Hand mount rotation offset (°, world Z axis) |
+| `ee_correction.x_offset_m` / `y_offset_m` | EE position correction (m, in EE frame — applied after yaw rotation) |
+| `pointcloud.top_z_pct` | Top Z% of points used for centroid estimation |
+| `pointcloud.z_top_pct` | Percentile for z_top estimation (outlier rejection) |
 
-> **EE 오프셋 적용 순서**: PCA로 방향각 `alpha`를 먼저 구하고, `ee_correction.yaw_deg`를 더한 최종 yaw에 맞춰 x/y 오프셋 벡터를 회전하여 적용한다.  
-> 즉 yaw가 바뀌면 x/y 이동 방향도 함께 바뀐다.
+> **EE offset application order**: PCA computes the approach angle `alpha` first; `ee_correction.yaw_deg` is added to get the final yaw, and the x/y offset vector is rotated accordingly.  
+> This means changing yaw also rotates the x/y displacement direction.
 
-### `configs/fruits.yaml` — 과일별 EE 보정 오프셋
+### `configs/fruits.yaml` — Per-object EE offset overrides
 
-`--query`로 입력한 이름(소문자)과 정확 매칭되면 `arm.yaml` 기본값을 덮어쓴다.  
-항목은 모두 optional이며, 없으면 `arm.yaml` 기본값을 유지한다.
+If the `--query` string (lowercased) matches an entry, it overrides the `arm.yaml` defaults.  
+All fields are optional — missing fields fall back to `arm.yaml` values.
 
 ```yaml
 pear:
@@ -91,36 +99,36 @@ pear:
   grasp_z_offset_m: 0.13
 ```
 
-지원 항목: `yaw_deg`, `x_offset_m`, `y_offset_m`, `grasp_z_offset_m`
+Supported fields: `yaw_deg`, `x_offset_m`, `y_offset_m`, `grasp_z_offset_m`
 
-### `configs/hand.yaml` — KISTAR 핸드 자세
+### `configs/hand.yaml` — KISTAR hand poses
 
-파지(`hand_grasp`), 초기(`hand_init`), 릴리즈(`hand_release`) 자세를 degrees 단위로 정의한다.  
-`run_topdown_grasp.py`와 `robot_executor.py` 모두 이 파일에서 읽는다.
+Defines grasp (`hand_grasp`), idle (`hand_init`), and release (`hand_release`) poses in degrees.  
+Both `run_topdown_grasp.py` and `robot_executor.py` read from this file.
 
 ---
 
-## 캘리브레이션
+## Calibration
 
-캘리브레이션 파일: `configs/calibration/extrinsic_20260612_170053.json`
+Calibration file: `configs/calibration/extrinsic_20260612_170053.json`
 
-| 필드 | 설명 | 변경 여부 |
+| Field | Description | Editable |
 |---|---|---|
-| `T_base_camera` | 핸드-아이 캘리브레이션 결과 (카메라 → 베이스 변환) | **변경 금지** |
-| `T_world_base` | 로봇 베이스 마운트 위치/자세 (world → base) | 자유롭게 변경 가능 |
+| `T_base_camera` | Hand-eye calibration result (camera → base transform) | **Do not modify** |
+| `T_world_base` | Robot base mount position/orientation (world → base) | Freely editable |
 
-### T_world_base 업데이트
+### Updating T_world_base
 
-로봇 베이스 위치가 바뀌었을 때 `update_world_base.py`로 행렬을 자동 계산하여 JSON에 기록한다.
+When the robot base position changes, use `update_world_base.py` to recompute and write the matrix.
 
 ```bash
-# 미리보기 (파일 수정 없음)
+# Preview only (no file changes)
 python scripts/update_world_base.py \
     --calib configs/calibration/extrinsic_20260612_170053.json \
     --x 0.066 --y -0.122 --z 0.099 \
     --roll_deg 45.0 --dry_run
 
-# 실제 적용
+# Apply
 python scripts/update_world_base.py \
     --calib configs/calibration/extrinsic_20260612_170053.json \
     --x 0.066 --y -0.122 --z 0.099 \
@@ -129,227 +137,274 @@ python scripts/update_world_base.py \
 
 ---
 
-## 사용법
+## ROS2 Stack
 
-### 인터랙티브 파이프라인 (권장)
+MoveIt2 must be running in a separate terminal before starting the pipeline.
 
-SAM3 모델을 한 번 로드하고, 텍스트 쿼리를 반복 입력받아 실행한다.  
-RealSense 파이프라인도 세션 내내 유지되므로 AE/AWB 재수렴 없이 쾌적하게 촬영된다.
+### 1. Allow X11 forwarding (for RViz GUI)
+
+```bash
+xhost +local:docker
+```
+
+### 2. Start the container
+
+```bash
+docker start ros2_humble
+```
+
+### 3. Launch MoveIt2
+
+```bash
+docker exec -it -e DISPLAY=$DISPLAY ros2_humble bash -c "
+  unset PYTHONPATH PYTHONHOME CONDA_PREFIX CONDA_DEFAULT_ENV CONDA_PROMPT_MODIFIER
+  export PATH=/usr/sbin:/usr/bin:/sbin:/bin:/opt/ros/humble/bin
+  export ROS_DOMAIN_ID=9
+  export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+  export ROS_LOCALHOST_ONLY=0
+  source /opt/ros/humble/setup.bash
+  source /root/HARILAB/dex_ros/isaac-ros/kistar_ws/install/setup.bash
+  ros2 launch franka_kistar_bringup fr3_interactive_pose_control.launch_GWB.py \
+    gui:=true \
+    use_fake_joint_states:=false \
+    execute_mode:=direct_franka_topic \
+    reference_frame:=base
+"
+```
+
+Launch file location:
+```
+dex_ros/isaac-ros/kistar_ws/src/franka_kistar_bringup/launch/
+    fr3_interactive_pose_control.launch_GWB.py
+```
+
+Once MoveIt2 is ready, the `/move_action`, `/compute_ik`, and `/compute_cartesian_path` action servers become active and Stage 3 of the pipeline can communicate with the robot.
+
+> **Note**: If the container is not restarted after a previous session, two MoveGroup nodes may be running. See the Troubleshooting section if you see `/move_action unexpected result response` warnings.
+
+---
+
+## Usage
+
+### Interactive Pipeline (Recommended)
+
+Loads the SAM3 model once and accepts repeated text queries in a loop.  
+The RealSense pipeline stays open for the entire session, so AE/AWB converges only once at startup.
 
 ```bash
 conda activate pipeline_all
 cd HARILAB/Grasp_fruit
 
-# 비전만 (로봇 미실행)
+# Vision only (no robot execution)
 python scripts/run_pipeline_interactive.py \
     --calibration configs/calibration/extrinsic_20260612_170053.json
 
-# Grasp 실행
+# Grasp
 python scripts/run_pipeline_interactive.py \
     --calibration configs/calibration/extrinsic_20260612_170053.json \
     --execute_robot
 
-# Pick + Place 실행
+# Pick + Place
 python scripts/run_pipeline_interactive.py \
     --calibration configs/calibration/extrinsic_20260612_170053.json \
     --execute_robot --place
 
-# MoveIt collision 비활성화 (로봇 베이스 이동 후 임시)
+# Disable MoveIt collision checking (temporary, after robot base relocation)
 python scripts/run_pipeline_interactive.py \
     --calibration configs/calibration/extrinsic_20260612_170053.json \
     --execute_robot --place --disable_collision
 ```
 
-**시작 시 동작:**
+**Startup sequence:**
 
-1. SAM3 모델 로드
-2. "비디오 녹화 하시겠습니까?" 질문 (yes → `data/outputs/interactive_session.mp4`에 저장)
-3. RealSense 파이프라인 시작 + warmup (60프레임, AE/AWB 수렴 대기)
-4. `Query>` 프롬프트 반복 — `exit` / `quit` / `q` 입력 시 종료
+1. SAM3 model load
+2. Prompt: "Record video? (yes/no)" — yes saves to `data/outputs/interactive_session.mp4`
+3. RealSense pipeline start + warmup (60 frames, AE/AWB convergence)
+4. Repeated `Query>` prompt — type `exit` / `quit` / `q` to stop
 
-> 세션 녹화(yes)를 선택하면 로봇 실행 시 매번 나오는 Docker 녹화 질문은 자동 생략된다.
+> When session recording is enabled (yes), the per-execution Docker recording prompt is automatically skipped.
 
-### 단발 파이프라인
+### One-shot Pipeline
 
 ```bash
-# 카메라 캡처 + Grasp
+# Camera capture + Grasp
 python scripts/run_pipeline.py \
     --capture \
     --query "apple" \
     --calibration configs/calibration/extrinsic_20260612_170053.json \
     --execute_robot
 
-# 카메라 캡처 + Pick + Place
+# Camera capture + Pick + Place
 python scripts/run_pipeline.py \
     --capture \
     --query "apple" \
     --calibration configs/calibration/extrinsic_20260612_170053.json \
     --execute_robot --place
 
-# 저장된 NPZ로 오프라인 처리 (로봇 미실행)
+# Offline processing from saved NPZ (no robot)
 python scripts/run_pipeline.py \
     --input data/raw/scene_000.npz \
     --query "apple" \
     --calibration configs/calibration/extrinsic_20260612_170053.json
 ```
 
-### 주요 공통 옵션
+### Common Options
 
-| 옵션 | 설명 | 기본값 |
+| Option | Description | Default |
 |---|---|---|
-| `--calibration` | 캘리브레이션 JSON 경로 | — |
-| `--query` | SAM3 텍스트 쿼리 (예: `apple`) | — |
-| `--execute_robot` | 로봇 실행 활성화 | 비활성 |
-| `--place` | Pick+Place 모드 (하강 거리는 `arm.yaml` 참조) | 비활성 |
-| `--speed_factor` | 로봇 속도 배율 | `0.1` |
-| `--approach_offset` | Approach 높이 오프셋 (m) | `0.10` |
-| `--z_offset` | Grasp Z 오프셋 (m, 미설정 시 `arm.yaml` 값 사용) | `arm.yaml` |
-| `--disable_collision` | MoveIt collision 검사 비활성화 (임시) | 비활성 |
+| `--calibration` | Path to calibration JSON | — |
+| `--query` | SAM3 text query (e.g. `apple`) | — |
+| `--execute_robot` | Enable robot execution | disabled |
+| `--place` | Pick+Place mode (descent distance from `arm.yaml`) | disabled |
+| `--speed_factor` | Robot speed scale factor | `0.1` |
+| `--approach_offset` | Approach height offset (m) | `0.10` |
+| `--z_offset` | Grasp Z offset (m); falls back to `arm.yaml` if unset | `arm.yaml` |
+| `--disable_collision` | Disable MoveIt collision checking (temporary) | disabled |
 
 ---
 
-## 파이프라인 단계
+## Pipeline Stages
 
 ```
-Stage 0: RealSense 캡처       →  data/raw/<stem>_000.npz  (+  _rgb.png, _depth_vis.png)
-Stage 1: SAM3 추론            →  data/interim/<stem>_mask.png  (+  _overlay.png)
-Stage 2: Top-down Grasp 계산  →  data/outputs/<stem>_topdown_summary.json  (+  _overlay.png)
-Stage 3: 로봇 실행            →  Docker exec → robot_executor.py
+Stage 0: RealSense capture    →  data/raw/<stem>_000.npz  (+  _rgb.png, _depth_vis.png)
+Stage 1: SAM3 inference       →  data/interim/<stem>_mask.png  (+  _overlay.png)
+Stage 2: Top-down grasp       →  data/outputs/<stem>_topdown_summary.json  (+  _overlay.png)
+Stage 3: Robot execution      →  docker exec → robot_executor.py
 ```
 
-### Stage 2 — Grasp 계산 상세
+### Stage 2 — Grasp Computation
 
-1. 마스크 영역 포인트클라우드 backproject → SOR 필터로 outlier 제거
-2. XY 평면 PCA → 장축 방향 = Grasp 접근 방향
-3. `arm.yaml` `ee_correction` + `fruits.yaml` override 적용 → EE 자세 결정
-4. z_top (상위 percentile) + `grasp_z_offset_m` → EE 높이 결정
-5. Summary JSON (`T_world_ee`, joint angles, hand encoder) 저장
+1. Backproject masked point cloud → SOR filter to remove outliers
+2. PCA on XY plane → major axis = grasp approach direction
+3. Apply `arm.yaml` `ee_correction` + `fruits.yaml` overrides → EE orientation
+4. z_top (upper percentile) + `grasp_z_offset_m` → EE height
+5. Save summary JSON (`T_world_ee`, joint angles, hand encoder values)
 
-### Stage 3 — 로봇 실행 흐름
+### Stage 3 — Robot Execution Flow
 
-**Grasp 모드:**
-
-```
-HOME → Approach (물체 위 approach_offset_m) → 하강 (Grasp 위치) → 핸드 파지
-→ 상승 (Approach 역재생) → HOME
-```
-
-**Place 모드 (Grasp 이후 연속 실행):**
+**Grasp mode:**
 
 ```
-(Grasp 완료) → HOME → world Z 기준 수직 하강 (place_z_descent_m) → 핸드 열기
-→ 수직 상승 → HOME
+HOME → Approach (approach_offset_m above object) → Descend (grasp position) → Close hand
+→ Ascend (reverse of approach) → HOME
 ```
 
-> Place 하강은 world Z 기준으로 계산된다. `T_world_base`에 roll이 있어도 수직으로 내려간다.
+**Place mode (runs after grasp):**
+
+```
+(Grasp complete) → HOME → Descend vertically along world Z (place_z_descent_m) → Open hand
+→ Ascend → HOME
+```
+
+> Place descent is computed in world Z. Even when `T_world_base` has a roll component, the motion stays vertical.
 
 ---
 
-## 발표 자료 이미지 생성
+## Presentation Figure Generation
 
-`_topdown_summary.json`으로부터 PCA 화살표 이미지와 좌표 이미지를 각각 생성한다.
+Generates two separate images from a `_topdown_summary.json` file.
 
 ```bash
 python scripts/make_presentation_figs.py \
     data/outputs/interactive_012_012_topdown_summary.json
 ```
 
-출력:
-- `*_fig_pca.png` — 마스크 오버레이 + PCA 장축 화살표
-- `*_fig_position.png` — 마스크 오버레이 + SAM3 검출 bbox + 파지 위치 좌표 (좌상단)
+Outputs:
+- `*_fig_pca.png` — mask overlay + PCA major axis arrow
+- `*_fig_position.png` — mask overlay + SAM3 detection bbox + grasp position coordinates (top-left)
 
 ---
 
-## 디렉토리 구조
+## Directory Structure
 
 ```
 Grasp_fruit/
 ├── configs/
-│   ├── arm.yaml                     # 로봇 팔 파라미터 (HOME 자세, 오프셋 등)
-│   ├── hand.yaml                    # 핸드 자세 파라미터
-│   ├── fruits.yaml                  # 과일별 EE 오프셋 override
-│   ├── paths.yaml                   # 머신별 경로 설정
-│   ├── calibration/                 # 캘리브레이션 JSON 파일들
+│   ├── arm.yaml                     # Robot arm parameters (HOME pose, offsets, etc.)
+│   ├── hand.yaml                    # Hand pose parameters
+│   ├── fruits.yaml                  # Per-object EE offset overrides
+│   ├── paths.yaml                   # Machine-specific path settings
+│   ├── calibration/                 # Calibration JSON files
 │   └── camera/
-│       └── realsense.yaml           # RealSense 해상도/FPS 설정
+│       └── realsense.yaml           # RealSense resolution / FPS settings
 │
 ├── scripts/
-│   ├── run_pipeline_interactive.py  # 인터랙티브 파이프라인 (권장)
-│   ├── run_pipeline.py              # 단발 파이프라인
-│   ├── pipeline_core.py             # 공통 stage 함수 / argparse 빌더
-│   ├── robot_executor.py            # Docker 내부 로봇 실행 진입점
-│   ├── send_to_robot.py             # 호스트 → Docker exec 브릿지
-│   ├── run_topdown_grasp.py         # Top-down grasp 계산 (Stage 2)
-│   ├── run_sam3_only_stage.py       # SAM3 추론 subprocess용 (Stage 1)
-│   ├── capture_realsense_once.py    # RealSense 단회 촬영 (Stage 0)
-│   ├── make_presentation_figs.py    # 발표용 이미지 생성
-│   ├── update_world_base.py         # T_world_base 업데이트 유틸
-│   ├── launch_moveit.py             # MoveIt 런치 헬퍼
-│   ├── docker_runner.py             # Docker exec / 녹화 유틸리티
+│   ├── run_pipeline_interactive.py  # Interactive pipeline (recommended)
+│   ├── run_pipeline.py              # One-shot pipeline
+│   ├── pipeline_core.py             # Shared stage functions / argparse builders
+│   ├── robot_executor.py            # Robot execution entry point (runs inside Docker)
+│   ├── send_to_robot.py             # Host → Docker exec bridge
+│   ├── run_topdown_grasp.py         # Top-down grasp computation (Stage 2)
+│   ├── run_sam3_only_stage.py       # SAM3 inference subprocess (Stage 1)
+│   ├── capture_realsense_once.py    # Single RealSense capture (Stage 0)
+│   ├── make_presentation_figs.py    # Presentation figure generation
+│   ├── update_world_base.py         # T_world_base update utility
+│   ├── launch_moveit.py             # MoveIt launch helper
+│   ├── docker_runner.py             # Docker exec / video recording utilities
 │   └── utils/
-│       ├── arm.py                   # arm.yaml 파싱 및 상수 export
-│       ├── hand.py                  # hand.yaml 파싱 및 상수 export
-│       ├── paths.py                 # paths.yaml 파싱
+│       ├── arm.py                   # arm.yaml parser and constant exports
+│       ├── hand.py                  # hand.yaml parser and constant exports
+│       ├── paths.py                 # paths.yaml parser
 │       ├── grasp.py                 # GraspExecutor (ROS2 Node)
-│       ├── place.py                 # PlaceExecutor (GraspExecutor 상속)
-│       └── step.py                  # 원자 step 함수 (move_home, approach, …)
+│       ├── place.py                 # PlaceExecutor (extends GraspExecutor)
+│       └── step.py                  # Atomic step functions (move_home, approach, …)
 │
 ├── src/
 │   └── affordance_grasp/
 │       ├── io/
-│       │   ├── dataset_io.py        # NPZ 저장/로드, JSON 유틸
-│       │   └── realsense.py         # RealSense 캡처 / RealSenseSession
+│       │   ├── dataset_io.py        # NPZ save/load, JSON utilities
+│       │   └── realsense.py         # RealSense capture / RealSenseSession
 │       └── geometry/
-│           └── frame_transform.py   # 변환 행렬 유틸 (xyzrpy, invert 등)
+│           └── frame_transform.py   # Transform matrix utilities (xyzrpy, invert, etc.)
 │
 ├── data/
-│   ├── raw/                         # RealSense 캡처 NPZ + PNG
-│   ├── interim/                     # SAM3 마스크, 오버레이
-│   └── outputs/                     # Grasp summary JSON, overlay, session.mp4
+│   ├── raw/                         # RealSense capture NPZ + PNG
+│   ├── interim/                     # SAM3 masks, overlays
+│   └── outputs/                     # Grasp summary JSON, overlays, session.mp4
 │
 ├── docker/
 │   ├── Dockerfile.moveit
 │   └── entrypoint_moveit.sh
 │
-├── environment_pipeline_all.yml     # Conda 환경 정의
-└── setup_pipeline_all.sh            # 환경 구성 스크립트
+├── environment_pipeline_all.yml     # Conda environment definition
+└── setup_pipeline_all.sh            # Environment setup script
 ```
 
 ---
 
-## 트러블슈팅
+## Troubleshooting
 
-### IK 실패 (code=-31)
+### IK failure (code=-31)
 
-MoveIt collision scene이 로봇 베이스 위치와 맞지 않으면 IK가 차단된다.
+Occurs when the MoveIt collision scene does not match the current robot base position.
 
-- 임시: `--disable_collision` 플래그 사용
-- 근본: RViz Planning Scene에서 collision object 위치를 새 베이스 위치에 맞게 업데이트
+- Temporary fix: use `--disable_collision`
+- Proper fix: update the collision object positions in the RViz Planning Scene to match the new base location
 
-### depth_vis.png 이미지가 온통 파랑
+### `depth_vis.png` is entirely blue
 
-고정 `alpha` 스케일링 문제. 현재 코드는 프레임별 min-max 정규화 + TURBO 컬러맵을 사용하므로 발생하지 않아야 한다. 구버전 코드(`alpha=0.03`, COLORMAP_JET)를 사용 중인 경우 `src/affordance_grasp/io/realsense.py`의 `make_depth_vis` 함수를 확인한다.
+This was caused by a fixed `alpha` scaling. The current code uses per-frame min-max normalization with the TURBO colormap and should not produce this issue. If it occurs, check the `make_depth_vis` function in `src/affordance_grasp/io/realsense.py`.
 
-### RealSense 이미지가 뿌옇다
+### RealSense images are blurry
 
-카메라 파이프라인을 시작 직후 바로 캡처하면 AE/AWB가 수렴하기 전이라 뿌옇게 나온다.  
-인터랙티브 파이프라인(`run_pipeline_interactive.py`)은 `RealSenseSession`으로 세션 내내 파이프라인을 유지하므로 최초 warmup(60프레임) 이후에는 문제없다.  
-단발 파이프라인은 `--warmup_frames` 옵션으로 조절할 수 있다.
+Capturing immediately after starting the pipeline produces blurry images because AE/AWB has not converged yet.  
+The interactive pipeline (`run_pipeline_interactive.py`) keeps the RealSense pipeline alive throughout the session via `RealSenseSession`, so only the initial warmup (60 frames) is needed.  
+For the one-shot pipeline, adjust the warmup length with `--warmup_frames`.
 
-### `/move_action`에 action server가 두 개
+### Two action servers on `/move_action`
 
 ```
 [WARN] Ignoring unexpected result response. There may be more than one action server for the action '/move_action'
 ```
 
-Docker 컨테이너 안에 MoveGroup 노드가 두 개 실행 중인 경우다. 이전 세션이 정상 종료되지 않았을 때 발생한다.
+Two MoveGroup nodes are running inside the container — typically caused by a previous session not shutting down cleanly.
 
 ```bash
-# 컨테이너 안에서
+# Inside the container
 ros2 node list | grep move_group
 kill $(ps aux | grep move_group | grep -v grep | awk '{print $2}')
 ```
 
-### Place가 world Z 방향이 아닌 base Z로 내려간다
+### Place descends along base Z instead of world Z
 
-`step_place_from_home`이 `T_world_base`를 찾지 못하는 경우다. Summary JSON에 `T_world_base`가 있는지 확인하고, 캘리브레이션 JSON에 해당 필드가 있는지 점검한다.
+`step_place_from_home` could not find `T_world_base`. Check that the summary JSON contains the `T_world_base` field and that the calibration JSON has the corresponding entry.
