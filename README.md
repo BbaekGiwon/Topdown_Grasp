@@ -5,8 +5,8 @@ Captures RGB-D with a RealSense camera, detects the target object via SAM3 text-
 computes a top-down grasp pose, and executes the full pick-and-place autonomously.
 
 Designed to work together with  
-- [Franka_KISTAR_R_Exp_GWB](https://github.com/KIST-HARILAB/Franka_KISTAR_R_Exp_GWB)
-- [Dex_ROS_GWB](https://github.com/KIST-HARILAB/Dex_ROS_GWB)
+- [Franka_KISTAR_R_Exp_GWB](https://github.com/BbaekGiwon/Franka_KISTAR_R_Exp_GWB)
+- [Dex_ROS_GWB](https://github.com/BbaekGiwon/Dex_ROS_GWB)
 
 Made by **[Giwon Baek](https://github.com/BbaekGiwon)** (HARI LAB), 2026.06 
 
